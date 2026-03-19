@@ -1,0 +1,177 @@
+"""
+╔══════════════════════════════════════════════════════════════╗
+║         SCANNER CEDEARS — INTERFAZ WEB                      ║
+║         Flask App para Render.com                           ║
+╚══════════════════════════════════════════════════════════════╝
+"""
+
+from flask import Flask, render_template, jsonify, request
+import threading
+import json
+import os
+import sys
+from datetime import datetime
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+app = Flask(__name__)
+
+# Estado global del scanner
+scanner_state = {
+    "running": False,
+    "session": "",
+    "progress": 0,
+    "total": 0,
+    "current_ticker": "",
+    "results": [],
+    "log": [],
+    "last_run": None,
+}
+
+
+def run_scanner_thread(session: str):
+    """Corre el scanner en un thread separado para no bloquear la web."""
+    global scanner_state
+
+    scanner_state["running"]        = True
+    scanner_state["session"]        = session
+    scanner_state["progress"]       = 0
+    scanner_state["results"]        = []
+    scanner_state["log"]            = []
+    scanner_state["current_ticker"] = ""
+
+    try:
+        # Import dinámico para evitar problemas de módulo
+        import importlib
+        import scanner as sc
+        importlib.reload(sc)
+
+        from config import CEDEARS, TOP_N, MIN_PROBABILITY
+
+        scanner_state["total"] = len(CEDEARS)
+        resultados = []
+
+        for i, ticker in enumerate(CEDEARS, 1):
+            scanner_state["progress"]       = i
+            scanner_state["current_ticker"] = ticker
+
+            try:
+                res = sc.analizar_ticker(ticker)
+                if res and res["probabilidad"] >= MIN_PROBABILITY:
+                    resultados.append(res)
+                    scanner_state["log"].append(
+                        f"✅ {ticker.replace('.BA','')} — {res['setup']} | {res['probabilidad']}%"
+                    )
+                else:
+                    scanner_state["log"].append(f"⬜ {ticker.replace('.BA','')} — sin setup")
+            except Exception as e:
+                scanner_state["log"].append(f"⚠️ {ticker} — error")
+
+            import time
+            time.sleep(0.3) if i % 10 != 0 else time.sleep(2)
+
+        # Ranking y top N
+        resultados.sort(
+            key=lambda x: (x["probabilidad"], x["confluencias"], x["vol_rel"]),
+            reverse=True
+        )
+        top = resultados[:TOP_N]
+        scanner_state["results"]  = top
+        scanner_state["last_run"] = datetime.now().strftime("%d/%m/%Y %H:%M")
+
+        # Guardar en Excel
+        if top:
+            sc.guardar_excel(top, session)
+
+        # Enviar Telegram
+        msg = sc.build_telegram_message(top, session)
+        sc.send_telegram(msg)
+
+        scanner_state["log"].append(f"\n🏁 Completado. {len(top)} oportunidades encontradas.")
+
+    except Exception as e:
+        scanner_state["log"].append(f"❌ Error crítico: {e}")
+
+    finally:
+        scanner_state["running"] = False
+
+
+def get_historial():
+    """Lee el historial del Excel y lo retorna como lista."""
+    try:
+        from openpyxl import load_workbook
+        archivo = os.path.join(os.path.dirname(os.path.abspath(__file__)), "registros_scanner.xlsx")
+        if not os.path.exists(archivo):
+            return []
+        wb = load_workbook(archivo)
+        ws = wb.active
+        rows = []
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if row[0]:
+                rows.append({
+                    "fecha":        row[0],
+                    "hora":         row[1],
+                    "sesion":       row[2],
+                    "ticker":       row[3],
+                    "setup":        row[4],
+                    "confluencias": row[5],
+                    "probabilidad": row[6],
+                    "precio":       row[7],
+                    "rsi":          row[8],
+                    "vol_rel":      row[9],
+                    "atr":          row[10],
+                    "descripcion":  row[11],
+                })
+        return list(reversed(rows))  # más recientes primero
+    except Exception:
+        return []
+
+
+# ═══════════════════════════════════════════════════════════════
+#  RUTAS
+# ═══════════════════════════════════════════════════════════════
+
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+
+@app.route("/run/<session>", methods=["POST"])
+def run(session):
+    """Arranca el scanner en background."""
+    session = session.upper()
+    if session not in ["PRE-MARKET", "APERTURA", "CIERRE", "MANUAL"]:
+        return jsonify({"error": "Sesión inválida"}), 400
+
+    if scanner_state["running"]:
+        return jsonify({"error": "El scanner ya está corriendo"}), 400
+
+    t = threading.Thread(target=run_scanner_thread, args=(session,), daemon=True)
+    t.start()
+    return jsonify({"ok": True, "session": session})
+
+
+@app.route("/status")
+def status():
+    """Retorna el estado actual del scanner (polling desde el frontend)."""
+    return jsonify({
+        "running":        scanner_state["running"],
+        "session":        scanner_state["session"],
+        "progress":       scanner_state["progress"],
+        "total":          scanner_state["total"],
+        "current_ticker": scanner_state["current_ticker"],
+        "results":        scanner_state["results"],
+        "log":            scanner_state["log"][-30:],  # últimas 30 líneas
+        "last_run":       scanner_state["last_run"],
+    })
+
+
+@app.route("/historial")
+def historial():
+    """Retorna el historial completo del Excel."""
+    return jsonify(get_historial())
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)
