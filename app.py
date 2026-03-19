@@ -172,6 +172,70 @@ def historial():
     return jsonify(get_historial())
 
 
+@app.route("/yahoo")
+def yahoo_quotes():
+    """Retorna precios y variación de una lista de símbolos."""
+    symbols = request.args.get("symbols", "").split(",")
+    result  = {}
+    try:
+        import yfinance as yf
+        data = yf.download(symbols, period="2d", interval="1d",
+                           auto_adjust=True, progress=False, threads=True)
+        closes = data["Close"] if "Close" in data else data
+        for sym in symbols:
+            sym = sym.strip()
+            try:
+                col  = closes[sym] if sym in closes.columns else closes.iloc[:, 0]
+                vals = col.dropna()
+                if len(vals) >= 2:
+                    prev  = float(vals.iloc[-2])
+                    last  = float(vals.iloc[-1])
+                    result[sym] = {
+                        "price":   round(last, 2),
+                        "chg_pct": round((last - prev) / prev * 100, 2),
+                    }
+                elif len(vals) == 1:
+                    result[sym] = {"price": round(float(vals.iloc[-1]), 2), "chg_pct": 0}
+            except Exception:
+                pass
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify(result)
+
+
+@app.route("/sector_data")
+def sector_data():
+    """Retorna historial de 30 días + precio actual para un grupo de tickers."""
+    tickers = request.args.get("tickers", "").split(",")
+    tickers = [t.strip() for t in tickers if t.strip()]
+    result  = {}
+    try:
+        import yfinance as yf
+        import pandas as pd
+        data = yf.download(tickers, period="35d", interval="1d",
+                           auto_adjust=True, progress=False, threads=True)
+        closes = data["Close"] if "Close" in data else data
+
+        for t in tickers:
+            try:
+                col  = closes[t] if t in closes.columns else closes.iloc[:, 0]
+                vals = col.dropna()
+                hist = [{"date": str(idx.date()), "close": round(float(v), 2)}
+                        for idx, v in vals.items()]
+                prev = float(vals.iloc[-2]) if len(vals) >= 2 else float(vals.iloc[-1])
+                last = float(vals.iloc[-1])
+                result[t] = {
+                    "price":   round(last, 2),
+                    "chg_pct": round((last - prev) / prev * 100, 2),
+                    "history": hist,
+                }
+            except Exception:
+                pass
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify(result)
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
