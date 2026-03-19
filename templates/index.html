@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>📈 Scanner CEDEARs</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', sans-serif;
+    background: #0d1117;
+    color: #e6edf3;
+    min-height: 100vh;
+  }
+
+  header {
+    background: linear-gradient(135deg, #1f2937, #111827);
+    border-bottom: 1px solid #21d07233;
+    padding: 20px 30px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  header h1 { font-size: 1.4rem; color: #21d072; }
+  header span { font-size: 0.85rem; color: #8b949e; }
+
+  .container { max-width: 1100px; margin: 0 auto; padding: 30px 20px; }
+
+  /* BOTONES */
+  .session-buttons {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin-bottom: 30px;
+  }
+
+  .btn-session {
+    padding: 16px 20px;
+    border: none;
+    border-radius: 10px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .btn-session span.time { font-size: 0.75rem; font-weight: 400; opacity: 0.8; }
+
+  .btn-session:hover:not(:disabled) { transform: translateY(-2px); filter: brightness(1.1); }
+  .btn-session:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+  .btn-pre    { background: #1e3a5f; color: #60a5fa; border: 1px solid #60a5fa44; }
+  .btn-aper   { background: #1e3d2f; color: #21d072; border: 1px solid #21d07244; }
+  .btn-cierre { background: #3d1e3d; color: #c084fc; border: 1px solid #c084fc44; }
+  .btn-manual { background: #3d2e1e; color: #fb923c; border: 1px solid #fb923c44; }
+
+  /* PROGRESO */
+  #progress-section {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 24px;
+    display: none;
+  }
+
+  #progress-section.visible { display: block; }
+
+  .progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+
+  #session-label { color: #21d072; font-weight: 600; font-size: 1rem; }
+  #ticker-label  { color: #8b949e; font-size: 0.85rem; }
+
+  .progress-bar-bg {
+    background: #21262d;
+    border-radius: 6px;
+    height: 8px;
+    overflow: hidden;
+    margin-bottom: 14px;
+  }
+
+  #progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #21d072, #60a5fa);
+    border-radius: 6px;
+    transition: width 0.4s ease;
+    width: 0%;
+  }
+
+  #log-box {
+    background: #0d1117;
+    border: 1px solid #21262d;
+    border-radius: 8px;
+    padding: 12px;
+    height: 140px;
+    overflow-y: auto;
+    font-family: monospace;
+    font-size: 0.78rem;
+    color: #8b949e;
+  }
+
+  #log-box .ok    { color: #21d072; }
+  #log-box .warn  { color: #f59e0b; }
+  #log-box .skip  { color: #4b5563; }
+
+  /* RESULTADOS */
+  #results-section { margin-bottom: 30px; }
+
+  .section-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #8b949e;
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .results-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 14px;
+  }
+
+  .result-card {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    padding: 18px;
+    transition: border-color 0.2s;
+  }
+
+  .result-card:hover { border-color: #21d07266; }
+
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 12px;
+  }
+
+  .card-ticker { font-size: 1.2rem; font-weight: 700; color: #e6edf3; }
+  .card-setup  { font-size: 0.78rem; color: #8b949e; margin-top: 2px; }
+
+  .card-prob {
+    font-size: 1.1rem;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 20px;
+  }
+
+  .prob-fire  { background: #3d1a00; color: #ff6b35; }
+  .prob-green { background: #0d2818; color: #21d072; }
+  .prob-yellow{ background: #2d2000; color: #fbbf24; }
+
+  .card-stars { font-size: 0.85rem; margin-bottom: 8px; }
+
+  .card-conf-detail {
+    font-size: 0.75rem;
+    color: #60a5fa;
+    margin-bottom: 10px;
+    background: #0d1f3c;
+    padding: 6px 10px;
+    border-radius: 6px;
+  }
+
+  .card-data {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    font-size: 0.8rem;
+    margin-bottom: 10px;
+  }
+
+  .data-item { display: flex; flex-direction: column; }
+  .data-label { color: #8b949e; font-size: 0.7rem; }
+  .data-value { color: #e6edf3; font-weight: 600; }
+
+  .card-desc {
+    font-size: 0.75rem;
+    color: #8b949e;
+    border-top: 1px solid #21262d;
+    padding-top: 10px;
+    font-style: italic;
+  }
+
+  #no-results {
+    text-align: center;
+    color: #4b5563;
+    padding: 40px;
+    display: none;
+  }
+
+  /* HISTORIAL */
+  #historial-section {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .historial-header {
+    padding: 16px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #21262d;
+    cursor: pointer;
+  }
+
+  .historial-header h3 { font-size: 0.95rem; color: #8b949e; }
+
+  #historial-table-wrap {
+    overflow-x: auto;
+    display: none;
+  }
+
+  #historial-table-wrap.open { display: block; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+  }
+
+  th {
+    background: #0d1117;
+    color: #8b949e;
+    padding: 10px 14px;
+    text-align: left;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 10px 14px;
+    border-top: 1px solid #21262d;
+    white-space: nowrap;
+  }
+
+  tr:hover td { background: #1c2128; }
+
+  .badge {
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.72rem;
+    font-weight: 600;
+  }
+
+  .badge-pre    { background: #1e3a5f; color: #60a5fa; }
+  .badge-aper   { background: #1e3d2f; color: #21d072; }
+  .badge-cierre { background: #3d1e3d; color: #c084fc; }
+  .badge-manual { background: #3d2e1e; color: #fb923c; }
+
+  .last-run {
+    font-size: 0.78rem;
+    color: #4b5563;
+    text-align: right;
+    margin-bottom: 20px;
+  }
+
+  #last-run-text { color: #8b949e; }
+
+  /* Mobile */
+  @media (max-width: 600px) {
+    header { padding: 16px; }
+    header h1 { font-size: 1.1rem; }
+    .session-buttons { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>📈 Scanner CEDEARs</h1>
+    <span>Análisis técnico · 7 setups · Alertas Telegram</span>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- ÚLTIMA EJECUCIÓN -->
+  <div class="last-run">Última ejecución: <span id="last-run-text">—</span></div>
+
+  <!-- BOTONES DE SESIÓN -->
+  <div class="session-buttons">
+    <button class="btn-session btn-pre"    onclick="runScanner('PRE-MARKET')">
+      🌅 PRE-MARKET <span class="time">10:00 hs</span>
+    </button>
+    <button class="btn-session btn-aper"   onclick="runScanner('APERTURA')">
+      🔔 APERTURA <span class="time">11:15 hs</span>
+    </button>
+    <button class="btn-session btn-cierre" onclick="runScanner('CIERRE')">
+      🌙 CIERRE <span class="time">16:45 hs</span>
+    </button>
+    <button class="btn-session btn-manual" onclick="runScanner('MANUAL')">
+      🔍 MANUAL <span class="time">En cualquier momento</span>
+    </button>
+  </div>
+
+  <!-- PROGRESO -->
+  <div id="progress-section">
+    <div class="progress-header">
+      <span id="session-label">Analizando...</span>
+      <span id="ticker-label">—</span>
+    </div>
+    <div class="progress-bar-bg">
+      <div id="progress-bar"></div>
+    </div>
+    <div id="log-box"></div>
+  </div>
+
+  <!-- RESULTADOS -->
+  <div id="results-section">
+    <div class="section-title">🏆 Oportunidades detectadas</div>
+    <div class="results-grid" id="results-grid"></div>
+    <div id="no-results">😴 Sin oportunidades claras en este momento.</div>
+  </div>
+
+  <!-- HISTORIAL -->
+  <div id="historial-section">
+    <div class="historial-header" onclick="toggleHistorial()">
+      <h3>📋 Historial de señales</h3>
+      <span id="historial-arrow">▼</span>
+    </div>
+    <div id="historial-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Hora</th>
+            <th>Sesión</th>
+            <th>Ticker</th>
+            <th>Setup</th>
+            <th>Conf.</th>
+            <th>Prob%</th>
+            <th>Precio</th>
+            <th>RSI</th>
+            <th>Vol</th>
+          </tr>
+        </thead>
+        <tbody id="historial-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  let polling = null;
+
+  // ── Correr scanner ──────────────────────────────────────────
+  async function runScanner(session) {
+    const res = await fetch(`/run/${session}`, { method: 'POST' });
+    const data = await res.json();
+    if (data.error) { alert(data.error); return; }
+
+    // Mostrar sección de progreso
+    document.getElementById('progress-section').classList.add('visible');
+    document.getElementById('session-label').textContent = `🔄 Sesión: ${session}`;
+    document.getElementById('log-box').innerHTML = '';
+    document.getElementById('results-grid').innerHTML = '';
+    document.getElementById('no-results').style.display = 'none';
+
+    // Deshabilitar botones
+    document.querySelectorAll('.btn-session').forEach(b => b.disabled = true);
+
+    // Arrancar polling
+    polling = setInterval(checkStatus, 1500);
+  }
+
+  // ── Polling de estado ───────────────────────────────────────
+  async function checkStatus() {
+    const res  = await fetch('/status');
+    const data = await res.json();
+
+    // Progreso
+    const pct = data.total > 0 ? (data.progress / data.total * 100) : 0;
+    document.getElementById('progress-bar').style.width = pct + '%';
+    document.getElementById('ticker-label').textContent =
+      data.current_ticker ? `Analizando: ${data.current_ticker}` : '';
+
+    if (data.last_run) {
+      document.getElementById('last-run-text').textContent = data.last_run;
+    }
+
+    // Log
+    const logBox = document.getElementById('log-box');
+    logBox.innerHTML = data.log.map(line => {
+      if (line.startsWith('✅')) return `<div class="ok">${line}</div>`;
+      if (line.startsWith('⚠️')) return `<div class="warn">${line}</div>`;
+      return `<div class="skip">${line}</div>`;
+    }).join('');
+    logBox.scrollTop = logBox.scrollHeight;
+
+    // Cuando termina
+    if (!data.running) {
+      clearInterval(polling);
+      document.querySelectorAll('.btn-session').forEach(b => b.disabled = false);
+      renderResults(data.results);
+      loadHistorial();
+    }
+  }
+
+  // ── Renderizar resultados ───────────────────────────────────
+  function renderResults(results) {
+    const grid = document.getElementById('results-grid');
+    grid.innerHTML = '';
+
+    if (!results || results.length === 0) {
+      document.getElementById('no-results').style.display = 'block';
+      return;
+    }
+
+    results.forEach((op, i) => {
+      const probClass = op.probabilidad >= 80 ? 'prob-fire'
+                      : op.probabilidad >= 70 ? 'prob-green' : 'prob-yellow';
+      const probIcon  = op.probabilidad >= 80 ? '🔥' : op.probabilidad >= 70 ? '✅' : '🟡';
+      const stars     = '⭐'.repeat(op.confluencias);
+
+      // Confluencias detalle
+      const dc = op.detalle_conf || {};
+      const confItems = [];
+      if (dc.tendencia)           confItems.push('📈 Tendencia');
+      if (dc.soporte_resistencia) confItems.push('🧱 Soporte/Res');
+      if (dc.media_movil)         confItems.push('〰️ Media Móvil');
+      if (dc.rsi)                 confItems.push('📉 RSI');
+      if (dc.volumen)             confItems.push('📊 Volumen');
+
+      const extras = op.setups_extra && op.setups_extra.length > 0
+        ? ` <small style="color:#8b949e">(+${op.setups_extra.join(', ')})</small>` : '';
+
+      grid.innerHTML += `
+        <div class="result-card">
+          <div class="card-header">
+            <div>
+              <div class="card-ticker">${i+1}. ${op.ticker}</div>
+              <div class="card-setup">📐 ${op.setup}${extras}</div>
+            </div>
+            <div class="card-prob ${probClass}">${probIcon} ${op.probabilidad}%</div>
+          </div>
+          <div class="card-stars">${stars} Confluencias: ${op.confluencias}/5</div>
+          <div class="card-conf-detail">✅ ${confItems.join(' | ') || '—'}</div>
+          <div class="card-data">
+            <div class="data-item">
+              <span class="data-label">💲 Precio</span>
+              <span class="data-value">$${op.precio.toLocaleString()}</span>
+            </div>
+            <div class="data-item">
+              <span class="data-label">📉 RSI</span>
+              <span class="data-value">${op.rsi}</span>
+            </div>
+            <div class="data-item">
+              <span class="data-label">📊 Volumen</span>
+              <span class="data-value">${op.vol_rel}x</span>
+            </div>
+            <div class="data-item">
+              <span class="data-label">📏 ATR</span>
+              <span class="data-value">${op.atr}</span>
+            </div>
+          </div>
+          <div class="card-desc">💬 ${op.descripcion}</div>
+        </div>`;
+    });
+  }
+
+  // ── Historial ───────────────────────────────────────────────
+  async function loadHistorial() {
+    const res  = await fetch('/historial');
+    const rows = await res.json();
+    const tbody = document.getElementById('historial-body');
+    tbody.innerHTML = '';
+
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="10" style="color:#4b5563;text-align:center;padding:20px">Sin registros aún</td></tr>';
+      return;
+    }
+
+    const badgeClass = s => {
+      if (!s) return '';
+      const m = s.toUpperCase();
+      if (m.includes('PRE'))    return 'badge-pre';
+      if (m.includes('APER'))   return 'badge-aper';
+      if (m.includes('CIERRE')) return 'badge-cierre';
+      return 'badge-manual';
+    };
+
+    rows.forEach(r => {
+      tbody.innerHTML += `
+        <tr>
+          <td>${r.fecha}</td>
+          <td>${r.hora}</td>
+          <td><span class="badge ${badgeClass(r.sesion)}">${r.sesion || '—'}</span></td>
+          <td><strong>${r.ticker}</strong></td>
+          <td>${r.setup}</td>
+          <td>${r.confluencias}/5</td>
+          <td>${r.probabilidad}%</td>
+          <td>$${(r.precio||0).toLocaleString()}</td>
+          <td>${r.rsi}</td>
+          <td>${r.vol_rel}x</td>
+        </tr>`;
+    });
+  }
+
+  function toggleHistorial() {
+    const wrap  = document.getElementById('historial-table-wrap');
+    const arrow = document.getElementById('historial-arrow');
+    const open  = wrap.classList.toggle('open');
+    arrow.textContent = open ? '▲' : '▼';
+    if (open) loadHistorial();
+  }
+
+  // Cargar historial al iniciar
+  loadHistorial();
+</script>
+
+</body>
+</html>
