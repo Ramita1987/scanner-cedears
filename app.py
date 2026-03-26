@@ -29,7 +29,7 @@ scanner_state = {
 }
 
 
-def run_scanner_thread(session: str):
+def run_scanner_thread(session: str, params: dict = None, active_setups: list = None):
     """Corre el scanner en un thread separado para no bloquear la web."""
     global scanner_state
 
@@ -41,12 +41,14 @@ def run_scanner_thread(session: str):
     scanner_state["current_ticker"] = ""
 
     try:
-        # Import dinámico para evitar problemas de módulo
         import importlib
         import scanner as sc
         importlib.reload(sc)
 
         from config import CEDEARS, TOP_N, MIN_PROBABILITY
+
+        mp = float(params.get("mp", MIN_PROBABILITY)) if params else MIN_PROBABILITY
+        tn = int(params.get("tn", TOP_N))             if params else TOP_N
 
         scanner_state["total"] = len(CEDEARS)
         resultados = []
@@ -56,8 +58,8 @@ def run_scanner_thread(session: str):
             scanner_state["current_ticker"] = ticker
 
             try:
-                res = sc.analizar_ticker(ticker)
-                if res and res["probabilidad"] >= MIN_PROBABILITY:
+                res = sc.analizar_ticker(ticker, active_setups=active_setups)
+                if res and res["probabilidad"] >= mp:
                     resultados.append(res)
                     scanner_state["log"].append(
                         f"✅ {ticker.replace('.BA','')} — {res['setup']} | {res['probabilidad']}%"
@@ -70,20 +72,17 @@ def run_scanner_thread(session: str):
             import time
             time.sleep(0.3) if i % 10 != 0 else time.sleep(2)
 
-        # Ranking y top N
         resultados.sort(
             key=lambda x: (x["probabilidad"], x["confluencias"], x["vol_rel"]),
             reverse=True
         )
-        top = resultados[:TOP_N]
+        top = resultados[:tn]
         scanner_state["results"]  = top
         scanner_state["last_run"] = datetime.now().strftime("%d/%m/%Y %H:%M")
 
-        # Guardar en Excel
         if top:
             sc.guardar_excel(top, session)
 
-        # Enviar Telegram
         msg = sc.build_telegram_message(top, session)
         sc.send_telegram(msg)
 
@@ -146,9 +145,46 @@ def run(session):
     if scanner_state["running"]:
         return jsonify({"error": "El scanner ya está corriendo"}), 400
 
-    t = threading.Thread(target=run_scanner_thread, args=(session,), daemon=True)
+    body = request.get_json(silent=True) or {}
+    params = body.get("params", {})
+    active_setups = body.get("active_setups", None)  # None = todos
+
+    t = threading.Thread(
+        target=run_scanner_thread,
+        args=(session, params, active_setups),
+        daemon=True
+    )
     t.start()
     return jsonify({"ok": True, "session": session})
+
+
+@app.route("/news")
+def news():
+    """Retorna las últimas noticias financieras via RSS."""
+    import xml.etree.ElementTree as ET
+    feeds = [
+        ("Reuters", "https://feeds.reuters.com/reuters/businessNews"),
+        ("MarketWatch", "https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines"),
+        ("Yahoo Finance", "https://finance.yahoo.com/news/rssindex"),
+    ]
+    items = []
+    for source, url in feeds:
+        try:
+            r = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
+            root = ET.fromstring(r.content)
+            for item in root.iter("item"):
+                title = item.findtext("title", "").strip()
+                link  = item.findtext("link", "").strip()
+                pub   = item.findtext("pubDate", "").strip()
+                if title:
+                    items.append({"source": source, "title": title, "url": link, "time": pub[:16] if pub else ""})
+                if len(items) >= 10:
+                    break
+        except Exception:
+            pass
+        if len(items) >= 10:
+            break
+    return jsonify(items[:5])
 
 
 @app.route("/status")
