@@ -329,7 +329,7 @@ def calc_probabilidad(score_conf: int, calidad_setup: int, df_d: pd.DataFrame) -
 #  ANÁLISIS POR TICKER
 # ═══════════════════════════════════════════════════════════════
 
-def analizar_ticker(ticker: str) -> Optional[dict]:
+def analizar_ticker(ticker: str, active_setups: list = None) -> Optional[dict]:
     df_d, df_h = fetch_data(ticker)
     if df_d is None:
         return None
@@ -338,6 +338,11 @@ def analizar_ticker(ticker: str) -> Optional[dict]:
     df_h = add_indicators(df_h)
 
     setups = detect_setups(df_d, df_h)
+
+    # Filtrar por setups activos si se especificaron
+    if active_setups:
+        setups = [s for s in setups if s["setup"] in active_setups]
+
     if not setups:
         return None
 
