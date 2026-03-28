@@ -522,7 +522,6 @@ def guardar_excel(oportunidades: list, session_name: str):
         fecha   = datetime.now().strftime("%d/%m/%Y")
         hora    = datetime.now().strftime("%H:%M")
 
-        # Crear o cargar el archivo
         if os.path.exists(archivo):
             wb = load_workbook(archivo)
             ws = wb.active
@@ -530,32 +529,28 @@ def guardar_excel(oportunidades: list, session_name: str):
             wb = Workbook()
             ws = wb.active
             ws.title = "Registros"
-            # Encabezados
             ws.append([
                 "Fecha", "Hora", "Sesión", "Ticker", "Setup",
-                "Confluencias", "Probabilidad %", "Precio", "RSI",
-                "Volumen Rel", "ATR", "Descripción"
+                "Confluencias", "Probabilidad %", "Precio Entrada",
+                "Target +10%", "Stop -5%", "RSI",
+                "Volumen Rel", "ATR", "Descripción", "Resultado"
             ])
-            # Formato encabezados
+            from openpyxl.styles import Font, PatternFill
             for cell in ws[1]:
                 cell.font = Font(bold=True, color="FFFFFF")
                 cell.fill = PatternFill("solid", fgColor="1F4E79")
 
-        # Agregar filas
         for op in oportunidades:
+            precio  = op["precio"]
+            target  = round(precio * 1.10, 2)
+            stop    = round(precio * 0.95, 2)
             ws.append([
-                fecha,
-                hora,
-                session_name,
-                op["ticker"],
-                op["setup"],
-                op["confluencias"],
-                op["probabilidad"],
-                op["precio"],
-                op["rsi"],
-                op["vol_rel"],
-                op["atr"],
-                op["descripcion"],
+                fecha, hora, session_name,
+                op["ticker"], op["setup"],
+                op["confluencias"], op["probabilidad"],
+                precio, target, stop,
+                op["rsi"], op["vol_rel"], op["atr"],
+                op["descripcion"], "Pendiente"
             ])
 
         wb.save(archivo)
