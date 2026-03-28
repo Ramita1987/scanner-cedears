@@ -10,6 +10,7 @@ import threading
 import json
 import os
 import sys
+import requests
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -116,12 +117,15 @@ def get_historial():
                     "confluencias": row[5],
                     "probabilidad": row[6],
                     "precio":       row[7],
-                    "rsi":          row[8],
-                    "vol_rel":      row[9],
-                    "atr":          row[10],
-                    "descripcion":  row[11],
+                    "target":       row[8],
+                    "stop":         row[9],
+                    "rsi":          row[10],
+                    "vol_rel":      row[11],
+                    "atr":          row[12],
+                    "descripcion":  row[13],
+                    "resultado":    row[14] if len(row) > 14 else "Pendiente",
                 })
-        return list(reversed(rows))  # más recientes primero
+        return list(reversed(rows))
     except Exception:
         return []
 
@@ -241,29 +245,135 @@ def yahoo_quotes():
 
 @app.route("/sector_data")
 def sector_data():
-    """Retorna historial de 30 días + precio actual para un grupo de tickers."""
+    """Retorna historial de 30 días + precio actual. Usa Stooq como fuente confiable."""
     tickers = request.args.get("tickers", "").split(",")
     tickers = [t.strip() for t in tickers if t.strip()]
     result  = {}
+
     try:
         import yfinance as yf
         import pandas as pd
-        data = yf.download(tickers, period="35d", interval="1d",
-                           auto_adjust=True, progress=False, threads=True)
-        closes = data["Close"] if "Close" in data else data
+
+        # Intentar con Stooq primero (más confiable en servidores)
+        def fetch_stooq(sym):
+            try:
+                url = f"https://stooq.com/q/d/l/?s={sym.lower()}&i=d"
+                df  = pd.read_csv(url)
+                df.columns = [c.lower() for c in df.columns]
+                df["date"] = pd.to_datetime(df["date"])
+                df = df.sort_values("date").tail(35)
+                return df[["date","close"]].dropna()
+            except Exception:
+                return None
+
+        def fetch_yf(sym):
+            try:
+                t = yf.Ticker(sym)
+                df = t.history(period="35d", interval="1d", auto_adjust=True)
+                if df.empty:
+                    return None
+                df.columns = [c.lower() for c in df.columns]
+                df = df.reset_index()
+                df["date"] = pd.to_datetime(df["Date"] if "Date" in df.columns else df.index)
+                return df[["date","close"]].dropna()
+            except Exception:
+                return None
 
         for t in tickers:
             try:
-                col  = closes[t] if t in closes.columns else closes.iloc[:, 0]
-                vals = col.dropna()
-                hist = [{"date": str(idx.date()), "close": round(float(v), 2)}
-                        for idx, v in vals.items()]
-                prev = float(vals.iloc[-2]) if len(vals) >= 2 else float(vals.iloc[-1])
-                last = float(vals.iloc[-1])
+                df = fetch_stooq(t)
+                if df is None or len(df) < 5:
+                    df = fetch_yf(t)
+                if df is None or len(df) < 5:
+                    continue
+
+                hist  = [{"date": str(r["date"].date()), "close": round(float(r["close"]), 2)}
+                         for _, r in df.iterrows()]
+                last  = float(df["close"].iloc[-1])
+                prev  = float(df["close"].iloc[-2]) if len(df) >= 2 else last
                 result[t] = {
                     "price":   round(last, 2),
                     "chg_pct": round((last - prev) / prev * 100, 2),
                     "history": hist,
+                }
+            except Exception:
+                pass
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    return jsonify(result)
+
+
+@app.route("/watchlist_data")
+def watchlist_data():
+    """Retorna RSI, MACD, ATR y precio actual para una lista de tickers."""
+    tickers = request.args.get("tickers", "").split(",")
+    tickers = [t.strip() for t in tickers if t.strip()]
+    if not tickers:
+        return jsonify({})
+    result = {}
+    try:
+        import yfinance as yf
+        import numpy as np
+        data = yf.download(tickers, period="3mo", interval="1d",
+                           auto_adjust=True, progress=False, threads=True)
+
+        closes = data["Close"]  if "Close"  in data else data
+        highs  = data["High"]   if "High"   in data else None
+        lows   = data["Low"]    if "Low"    in data else None
+
+        for t in tickers:
+            try:
+                c = closes[t].dropna() if t in closes.columns else closes.iloc[:,0].dropna()
+                if len(c) < 26:
+                    continue
+
+                # Precio y variación
+                price   = round(float(c.iloc[-1]), 2)
+                prev    = float(c.iloc[-2])
+                chg_pct = round((price - prev) / prev * 100, 2)
+
+                # RSI 14
+                delta = c.diff()
+                gain  = delta.clip(lower=0).rolling(14).mean()
+                loss  = (-delta.clip(upper=0)).rolling(14).mean()
+                rs    = gain / loss.replace(0, float('nan'))
+                rsi   = round(float(100 - (100 / (1 + rs.iloc[-1]))), 1)
+
+                # MACD (12, 26, 9)
+                ema12 = c.ewm(span=12, adjust=False).mean()
+                ema26 = c.ewm(span=26, adjust=False).mean()
+                macd_line   = ema12 - ema26
+                signal_line = macd_line.ewm(span=9, adjust=False).mean()
+                macd_val    = round(float(macd_line.iloc[-1]), 3)
+                signal_val  = round(float(signal_line.iloc[-1]), 3)
+                macd_hist   = round(macd_val - signal_val, 3)
+
+                # ATR 14
+                atr_val = None
+                if highs is not None and lows is not None:
+                    h = highs[t].dropna() if t in highs.columns else None
+                    l = lows[t].dropna()  if t in lows.columns  else None
+                    if h is not None and l is not None and len(h) > 14:
+                        import pandas as pd
+                        tr = pd.concat([h-l,(h-c.shift()).abs(),(l-c.shift()).abs()],axis=1).max(axis=1)
+                        atr_val = round(float(tr.rolling(14).mean().iloc[-1]), 2)
+
+                # Señal MACD
+                macd_signal_str = "COMPRA" if macd_val > signal_val else "VENTA" if macd_val < signal_val else "NEUTRO"
+
+                result[t] = {
+                    "price":    price,
+                    "chg_pct":  chg_pct,
+                    "rsi":      rsi,
+                    "macd":     macd_val,
+                    "macd_signal": signal_val,
+                    "macd_hist":   macd_hist,
+                    "macd_str":    macd_signal_str,
+                    "atr":      atr_val,
+                    # Mini histórico para sparkline (últimos 20 cierres)
+                    "sparkline": [round(float(v),2) for v in c.iloc[-20:].tolist()],
                 }
             except Exception:
                 pass
