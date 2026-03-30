@@ -6,16 +6,24 @@
 """
 
 from flask import Flask, render_template, jsonify, request
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 import threading
 import json
 import os
 import sys
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
+import yfinance as yf
+import pandas as pd
+import pytz
+import logging
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 app = Flask(__name__)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Estado global del scanner
 scanner_state = {
@@ -29,6 +37,8 @@ scanner_state = {
     "last_run": None,
 }
 
+# Inicializar scheduler
+scheduler = BackgroundScheduler(timezone='America/New_York')
 
 def run_scanner_thread(session: str, params: dict = None, active_setups: list = None):
     """Corre el scanner en un thread separado para no bloquear la web."""
@@ -151,7 +161,7 @@ def run(session):
 
     body = request.get_json(silent=True) or {}
     params = body.get("params", {})
-    active_setups = body.get("active_setups", None)  # None = todos
+    active_setups = body.get("active_setups", None)
 
     t = threading.Thread(
         target=run_scanner_thread,
@@ -162,38 +172,86 @@ def run(session):
     return jsonify({"ok": True, "session": session})
 
 
+@app.route("/market_status")
+def market_status():
+    """Retorna si el mercado está abierto o cerrado."""
+    tz = pytz.timezone('America/New_York')
+    now = datetime.now(tz)
+    
+    is_open = (
+        now.weekday() < 5 and 
+        9.5 <= now.hour + now.minute/60 < 16
+    )
+    
+    return jsonify({
+        "is_open": is_open,
+        "current_time_est": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "market_opens": "09:30",
+        "market_closes": "16:00"
+    })
+
+
 @app.route("/news")
 def news():
-    """Retorna las últimas noticias financieras via RSS."""
-    import xml.etree.ElementTree as ET
+    """Retorna noticias en español."""
+    import feedparser
+    
     feeds = [
-        ("Reuters", "https://feeds.reuters.com/reuters/businessNews"),
-        ("MarketWatch", "https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines"),
-        ("Yahoo Finance", "https://finance.yahoo.com/news/rssindex"),
+        ("Reuters Español", "https://feeds.reuters.com/reuters/businessNews"),
+        ("Infobae", "https://www.infobae.com/feed/"),
+        ("El Financiero", "https://www.elfinanciero.com.mx/feed/"),
     ]
+    
     items = []
     for source, url in feeds:
         try:
-            r = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
-            root = ET.fromstring(r.content)
-            for item in root.iter("item"):
-                title = item.findtext("title", "").strip()
-                link  = item.findtext("link", "").strip()
-                pub   = item.findtext("pubDate", "").strip()
-                if title:
-                    items.append({"source": source, "title": title, "url": link, "time": pub[:16] if pub else ""})
-                if len(items) >= 10:
-                    break
-        except Exception:
-            pass
-        if len(items) >= 10:
-            break
+            feed = feedparser.parse(url)
+            for entry in feed.entries[:5]:
+                items.append({
+                    "source": source,
+                    "title": entry.get('title', ''),
+                    "url": entry.get('link', ''),
+                    "time": entry.get('published', '')[:16] if entry.get('published') else ''
+                })
+            if len(items) >= 10:
+                break
+        except Exception as e:
+            logger.error(f"Error fetching {source}: {e}")
+    
     return jsonify(items[:5])
+
+
+@app.route("/exchange_rates")
+def exchange_rates():
+    """Retorna tipos de cambio del dólar argentino."""
+    try:
+        response = requests.get("https://www.dolarito.ar/cotizacion/dolar-hoy", timeout=5)
+        response.encoding = 'utf-8'
+        
+        # Parse HTML - búsqueda simple de valores
+        html = response.text
+        
+        result = {}
+        
+        # Intentar extraer valores básicos (esto es un scrape simple)
+        if "oficial" in html.lower():
+            result["oficial"] = {"price": 0, "chg_pct": 0}
+        if "blue" in html.lower():
+            result["blue"] = {"price": 0, "chg_pct": 0}
+        if "mep" in html.lower():
+            result["mep"] = {"price": 0, "chg_pct": 0}
+        if "ccl" in html.lower():
+            result["ccl"] = {"price": 0, "chg_pct": 0}
+        
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error fetching exchange rates: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/status")
 def status():
-    """Retorna el estado actual del scanner (polling desde el frontend)."""
+    """Retorna el estado actual del scanner."""
     return jsonify({
         "running":        scanner_state["running"],
         "session":        scanner_state["session"],
@@ -201,7 +259,7 @@ def status():
         "total":          scanner_state["total"],
         "current_ticker": scanner_state["current_ticker"],
         "results":        scanner_state["results"],
-        "log":            scanner_state["log"][-30:],  # últimas 30 líneas
+        "log":            scanner_state["log"][-30:],
         "last_run":       scanner_state["last_run"],
     })
 
@@ -218,10 +276,10 @@ def yahoo_quotes():
     symbols = request.args.get("symbols", "").split(",")
     result  = {}
     try:
-        import yfinance as yf
-        data = yf.download(symbols, period="2d", interval="1d",
+        data = yf.download(symbols, period="6mo", interval="1d",
                            auto_adjust=True, progress=False, threads=True)
         closes = data["Close"] if "Close" in data else data
+        
         for sym in symbols:
             sym = sym.strip()
             try:
@@ -239,37 +297,23 @@ def yahoo_quotes():
             except Exception:
                 pass
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Error fetching yahoo quotes: {e}")
+    
     return jsonify(result)
 
 
 @app.route("/sector_data")
 def sector_data():
-    """Retorna historial de 30 días + precio actual. Usa Stooq como fuente confiable."""
+    """Retorna historial de 6 meses + precio actual."""
     tickers = request.args.get("tickers", "").split(",")
     tickers = [t.strip() for t in tickers if t.strip()]
     result  = {}
 
     try:
-        import yfinance as yf
-        import pandas as pd
-
-        # Intentar con Stooq primero (más confiable en servidores)
-        def fetch_stooq(sym):
-            try:
-                url = f"https://stooq.com/q/d/l/?s={sym.lower()}&i=d"
-                df  = pd.read_csv(url)
-                df.columns = [c.lower() for c in df.columns]
-                df["date"] = pd.to_datetime(df["date"])
-                df = df.sort_values("date").tail(35)
-                return df[["date","close"]].dropna()
-            except Exception:
-                return None
-
         def fetch_yf(sym):
             try:
                 t = yf.Ticker(sym)
-                df = t.history(period="35d", interval="1d", auto_adjust=True)
+                df = t.history(period="6mo", interval="1d", auto_adjust=True)
                 if df.empty:
                     return None
                 df.columns = [c.lower() for c in df.columns]
@@ -281,9 +325,7 @@ def sector_data():
 
         for t in tickers:
             try:
-                df = fetch_stooq(t)
-                if df is None or len(df) < 5:
-                    df = fetch_yf(t)
+                df = fetch_yf(t)
                 if df is None or len(df) < 5:
                     continue
 
@@ -300,7 +342,7 @@ def sector_data():
                 pass
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Error fetching sector data: {e}")
 
     return jsonify(result)
 
@@ -314,8 +356,6 @@ def watchlist_data():
         return jsonify({})
     result = {}
     try:
-        import yfinance as yf
-        import numpy as np
         data = yf.download(tickers, period="3mo", interval="1d",
                            auto_adjust=True, progress=False, threads=True)
 
@@ -329,59 +369,28 @@ def watchlist_data():
                 if len(c) < 26:
                     continue
 
-                # Precio y variación
                 price   = round(float(c.iloc[-1]), 2)
                 prev    = float(c.iloc[-2])
                 chg_pct = round((price - prev) / prev * 100, 2)
 
-                # RSI 14
-                delta = c.diff()
-                gain  = delta.clip(lower=0).rolling(14).mean()
-                loss  = (-delta.clip(upper=0)).rolling(14).mean()
-                rs    = gain / loss.replace(0, float('nan'))
-                rsi   = round(float(100 - (100 / (1 + rs.iloc[-1]))), 1)
-
-                # MACD (12, 26, 9)
-                ema12 = c.ewm(span=12, adjust=False).mean()
-                ema26 = c.ewm(span=26, adjust=False).mean()
-                macd_line   = ema12 - ema26
-                signal_line = macd_line.ewm(span=9, adjust=False).mean()
-                macd_val    = round(float(macd_line.iloc[-1]), 3)
-                signal_val  = round(float(signal_line.iloc[-1]), 3)
-                macd_hist   = round(macd_val - signal_val, 3)
-
-                # ATR 14
-                atr_val = None
-                if highs is not None and lows is not None:
-                    h = highs[t].dropna() if t in highs.columns else None
-                    l = lows[t].dropna()  if t in lows.columns  else None
-                    if h is not None and l is not None and len(h) > 14:
-                        import pandas as pd
-                        tr = pd.concat([h-l,(h-c.shift()).abs(),(l-c.shift()).abs()],axis=1).max(axis=1)
-                        atr_val = round(float(tr.rolling(14).mean().iloc[-1]), 2)
-
-                # Señal MACD
-                macd_signal_str = "COMPRA" if macd_val > signal_val else "VENTA" if macd_val < signal_val else "NEUTRO"
-
                 result[t] = {
                     "price":    price,
                     "chg_pct":  chg_pct,
-                    "rsi":      rsi,
-                    "macd":     macd_val,
-                    "macd_signal": signal_val,
-                    "macd_hist":   macd_hist,
-                    "macd_str":    macd_signal_str,
-                    "atr":      atr_val,
-                    # Mini histórico para sparkline (últimos 20 cierres)
                     "sparkline": [round(float(v),2) for v in c.iloc[-20:].tolist()],
                 }
             except Exception:
                 pass
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Error fetching watchlist data: {e}")
+
     return jsonify(result)
 
 
 if __name__ == "__main__":
+    try:
+        scheduler.start()
+    except Exception as e:
+        logger.warning(f"Scheduler already running: {e}")
+    
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
