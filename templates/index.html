@@ -1,21 +1,77 @@
-<html>
+<!DOCTYPE html>
+<html lang="es">
 <head>
-    <title>Scanner Cedears</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>R&B Estrategias</title>
+<style>
+:root {
+  --bg: #060a0f;
+  --text: #e8f0f8;
+  --green: #00e676;
+  --border: #1e2d3d;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--bg); color: var(--text); font-family: 'Syne', sans-serif; min-height: 100vh; }
+nav { position: fixed; top: 0; width: 100%; background: rgba(6,10,15,0.96); padding: 20px; z-index: 100; border-bottom: 1px solid var(--border); display: flex; justify-content: center; gap: 40px; }
+nav a { color: var(--text); text-decoration: none; cursor: pointer; }
+nav a:hover { color: var(--green); }
+main { padding-top: 80px; }
+section { padding: 40px; margin: 20px 0; border: 1px solid var(--border); }
+h1 { color: var(--green); margin-bottom: 20px; }
+button { padding: 15px; border: none; cursor: pointer; border-radius: 5px; font-weight: bold; }
+</style>
 </head>
 <body>
-    <h1>Scanner Cedears</h1>
-    <script>
-        function runScanner() {
-            fetch('/run')
-                .then(response => response.json())
-                .then(data => {
-                    // Update UI with the results
-                    console.log(data);
-                })
-                .catch(error => console.error('Error:', error));
-        }
+<nav>
+  <a onclick="showPage('inicio')">Inicio</a>
+  <a onclick="showPage('scanner')">Scanner</a>
+  <a onclick="showPage('sectores')">Sectores</a>
+  <a onclick="showPage('tutorial')">Tutorial</a>
+</nav>
 
-        // Show real progress here (e.g., loading spinner)
-    </script>
+<main>
+  <section id="inicio" style="display:block;">
+    <h1>R&B Estrategias</h1>
+    <div id="tickers"></div>
+  </section>
+
+  <section id="scanner" style="display:none;">
+    <h1>Scanner</h1>
+    <button onclick="runScan('PRE-MARKET')" style="background: #2979ff; color: white;">PRE-MARKET</button>
+    <button onclick="runScan('APERTURA')" style="background: var(--green); color: black;">APERTURA</button>
+    <button onclick="runScan('CIERRE')" style="background: #c084fc; color: white;">CIERRE</button>
+    <button onclick="runScan('MANUAL')" style="background: #ffc400; color: black;">MANUAL</button>
+    <div id="scan-status" style="display:none; margin-top:20px;"></div>
+  </section>
+
+  <section id="sectores" style="display:none;">
+    <h1>Sectores</h1>
+    <p>Análisis por sector</p>
+  </section>
+
+  <section id="tutorial" style="display:none;">
+    <h1>Tutorial</h1>
+    <p>Guía de uso</p>
+  </section>
+</main>
+
+<script>
+function showPage(p) { document.querySelectorAll('section').forEach(s => s.style.display = 'none'); document.getElementById(p).style.display = 'block'; }
+async function runScan(s) { 
+  const r = await fetch(`/run/${s}`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({params:{mp:60,tn:10}})});
+  document.getElementById('scan-status').style.display = 'block';
+  document.getElementById('scan-status').innerHTML = '✅ Scanner iniciado: ' + s;
+}
+async function load() {
+  const r = await fetch('/yahoo?symbols=SPY,QQQ,^DJI,^RUT,BTC-USD');
+  const d = await r.json();
+  let h = '';
+  Object.entries(d).forEach(([t,i]) => { h += `<div>${t}: $${i.price} ${i.chg_pct>0?'📈':'📉'} ${i.chg_pct}%</div>`; });
+  document.getElementById('tickers').innerHTML = h;
+}
+load();
+setInterval(load, 30000);
+</script>
 </body>
 </html>
