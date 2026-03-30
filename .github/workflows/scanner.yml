@@ -1,1 +1,68 @@
+name: Scanner CEDEARs Automático
 
+on:
+  schedule:
+    # Horarios en UTC — Argentina es UTC-3
+    # 10:00 ARG = 13:00 UTC
+    - cron: '0 13 * * 1-5'
+    # 11:15 ARG = 14:15 UTC
+    - cron: '15 14 * * 1-5'
+    # 16:45 ARG = 19:45 UTC
+    - cron: '45 19 * * 1-5'
+
+  # También permite correrlo manualmente desde GitHub
+  workflow_dispatch:
+    inputs:
+      session:
+        description: 'Sesión del scanner'
+        required: true
+        default: 'MANUAL'
+        type: choice
+        options:
+          - MANUAL
+          - PRE-MARKET
+          - APERTURA
+          - CIERRE
+
+jobs:
+  run-scanner:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Instalar dependencias
+        run: pip install yfinance pandas numpy requests openpyxl
+
+      - name: Determinar sesión
+        id: session
+        run: |
+          HOUR=$(date -u +%H)
+          MIN=$(date -u +%M)
+          INPUT="${{ github.event.inputs.session }}"
+
+          if [ -n "$INPUT" ]; then
+            echo "name=$INPUT" >> $GITHUB_OUTPUT
+          elif [ "$HOUR" = "13" ]; then
+            echo "name=PRE-MARKET" >> $GITHUB_OUTPUT
+          elif [ "$HOUR" = "14" ]; then
+            echo "name=APERTURA" >> $GITHUB_OUTPUT
+          elif [ "$HOUR" = "19" ]; then
+            echo "name=CIERRE" >> $GITHUB_OUTPUT
+          else
+            echo "name=MANUAL" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Correr scanner
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SESSION_NAME: ${{ steps.session.outputs.name }}
+        run: python run_scanner_ci.py
