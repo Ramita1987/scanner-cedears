@@ -13,6 +13,7 @@ import feedparser
 from datetime import datetime
 from urllib.parse import quote
 import re
+import yfinance as yf
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -226,6 +227,52 @@ def _pick_quote(data: dict, candidates: list) -> tuple:
     return {}, ""
 
 
+def yf_quote_first(symbols: list) -> tuple:
+    """Fallback Yahoo para cotizaciones actuales/cierre."""
+    for sym in symbols:
+        cached = get_cache(f"yfq_{sym}", ttl=900)
+        if cached:
+            return cached, sym
+        try:
+            h = yf.Ticker(sym).history(period="7d", interval="1d", auto_adjust=True)
+            if h is None or h.empty or "Close" not in h:
+                continue
+            closes = h["Close"].dropna()
+            if len(closes) == 0:
+                continue
+            last = float(closes.iloc[-1])
+            prev = float(closes.iloc[-2]) if len(closes) >= 2 else last
+            chg = round((last - prev) / prev * 100, 2) if prev else 0.0
+            q = {"price": round(last, 2), "chg_pct": chg}
+            set_cache(f"yfq_{sym}", q)
+            return q, sym
+        except Exception:
+            continue
+    return {}, ""
+
+
+def yf_daily(symbol: str, timeseries: int = 130) -> list:
+    """Fallback Yahoo para historial diario."""
+    cached = get_cache(f"yfd_{symbol}", ttl=3600)
+    if cached:
+        return cached
+    try:
+        h = yf.Ticker(symbol).history(period="10mo", interval="1d", auto_adjust=True)
+        if h is None or h.empty or "Close" not in h:
+            return []
+        out = []
+        for idx, row in h.iterrows():
+            c = _to_float(row.get("Close"), default=None)
+            if c is None:
+                continue
+            out.append({"date": idx.strftime("%Y-%m-%d"), "close": round(c, 2)})
+        if len(out) >= 5:
+            return set_cache(f"yfd_{symbol}", out[-timeseries:])
+        return []
+    except Exception:
+        return []
+
+
 def fmp_daily(symbol: str, timeseries: int = 130) -> list:
     """Histórico diario FMP con fallback a Alpha Vantage."""
     cached = get_cache(f"fmpd_{symbol}", ttl=3600)
@@ -256,7 +303,10 @@ def fmp_daily(symbol: str, timeseries: int = 130) -> list:
                 return set_cache(f"fmpd_{symbol}", hist[-timeseries:])
     except Exception:
         pass
-    return av_daily(symbol)
+    av_hist = av_daily(symbol)
+    if len(av_hist) >= 5:
+        return av_hist
+    return yf_daily(symbol, timeseries=timeseries)
 
 
 def dolarapi() -> dict:
@@ -418,26 +468,61 @@ def market():
     for row in idx_defs + com_defs + cry_defs:
         pool.extend(row["candidates"])
     market_data = fmp_quote_safe(pool)
+    idx_yf = {
+        "S&P 500": ["^GSPC", "SPY"],
+        "NASDAQ": ["^IXIC", "QQQ"],
+        "Dow Jones": ["^DJI", "DIA"],
+        "Russell 2000": ["^RUT", "IWM"],
+        "VIX": ["^VIX", "VXX"],
+        "Merval": ["^MERV", "ARGT"],
+    }
+    com_yf = {
+        "Oro": ["GC=F", "GLD"],
+        "PetrÃ³leo WTI": ["CL=F", "USO"],
+        "Plata": ["SI=F", "SLV"],
+        "Cobre": ["HG=F", "CPER"],
+    }
+    cry_yf = {
+        "Bitcoin (BTC)": ["BTC-USD", "IBIT", "MSTR"],
+        "Ethereum (ETH)": ["ETH-USD", "ETHE", "ETHA"],
+    }
 
     indices = []
     for row in idx_defs:
         q, src = _pick_quote(market_data, row["candidates"])
+        if not q:
+            q, ys = yf_quote_first(idx_yf.get(row["n"], []))
+            if q:
+                src = f"YF:{ys}"
         indices.append({"n": row["n"], "s": row["s"], "src": src, "d": q})
 
     commodities = []
     for row in com_defs:
         q, src = _pick_quote(market_data, row["candidates"])
+        if not q:
+            q, ys = yf_quote_first(com_yf.get(row["n"], []))
+            if q:
+                src = f"YF:{ys}"
         commodities.append({"n": row["n"], "src": src, "d": q})
 
     crypto = []
     for row in cry_defs:
         q, src = _pick_quote(market_data, row["candidates"])
+        if not q:
+            q, ys = yf_quote_first(cry_yf.get(row["n"], []))
+            if q:
+                src = f"YF:{ys}"
         crypto.append({"n": row["n"], "src": src, "d": q})
 
     wl_syms = ["AAPL","MSFT","GOOGL","AMZN","NVDA","META","TSLA",
                "JPM","BAC","V","MA","XOM","CVX","JNJ","UNH",
                "GGAL","YPF","MELI","NU","BABA"]
     wl_data = fmp_quote_safe(wl_syms)
+    for s in wl_syms:
+        if s not in wl_data or wl_data[s].get("price") is None:
+            q, _ = yf_quote_first([s])
+            if q:
+                wl_data[s] = q
     movers = [{"s": s, "price": wl_data[s]["price"], "chg_pct": wl_data[s]["chg_pct"]}
               for s in wl_syms if s in wl_data and wl_data[s].get("chg_pct") is not None]
     movers.sort(key=lambda x: x["chg_pct"], reverse=True)
@@ -626,10 +711,12 @@ def debug_fmp():
     try:
         url = f"https://financialmodelingprep.com/stable/quote?symbol=AAPL&apikey={FMP_KEY}"
         r   = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        yq, ys = yf_quote_first(["AAPL"])
         return jsonify({
             "status":   r.status_code,
             "fmp_key":  FMP_KEY[:8] + "...",
-            "response": r.json() if r.status_code == 200 else r.text[:500]
+            "response": r.json() if r.status_code == 200 else r.text[:500],
+            "yf_fallback": {"symbol": ys, "quote": yq},
         })
     except Exception as e:
         return jsonify({"error": str(e)})
