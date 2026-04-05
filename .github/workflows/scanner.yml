@@ -4,11 +4,11 @@ on:
   schedule:
     # Horarios en UTC — Argentina es UTC-3
     # 10:00 ARG = 13:00 UTC
-    - cron: '0 13 * * 1-5'
+    - cron: '0 10 * * 1-5'
     # 11:15 ARG = 14:15 UTC
-    - cron: '15 14 * * 1-5'
+    - cron: '15 11 * * 1-5'
     # 16:45 ARG = 19:45 UTC
-    - cron: '45 19 * * 1-5'
+    - cron: '45 16 * * 1-5'
 
   # También permite correrlo manualmente desde GitHub
   workflow_dispatch:
