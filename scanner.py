@@ -15,10 +15,14 @@ from typing import Optional
 import requests
 import sys
 import os
+from urllib.parse import quote
 
 # ── Importar configuración ──────────────────────────────────────
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, TOP_N, MIN_PROBABILITY, CEDEARS
+
+FMP_KEY = os.environ.get("FMP_KEY", "")
+GOOGLE_SHEETS_WEBHOOK_URL = os.environ.get("GOOGLE_SHEETS_WEBHOOK_URL", "").strip()
 
 # ── Logger ──────────────────────────────────────────────────────
 logging.basicConfig(
@@ -35,6 +39,81 @@ log = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════
 #  DESCARGA DE DATOS
 # ═══════════════════════════════════════════════════════════════
+
+def _fmp_daily_ohlc(ticker: str) -> Optional[pd.DataFrame]:
+    """Fallback diario via FMP para cuando Yahoo falla."""
+    if not FMP_KEY:
+        return None
+    try:
+        enc = quote(ticker, safe="")
+        url = (
+            f"https://financialmodelingprep.com/api/v3/historical-price-full/{enc}"
+            f"?timeseries=220&apikey={FMP_KEY}"
+        )
+        r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code != 200:
+            return None
+        payload = r.json()
+        rows = payload.get("historical", []) if isinstance(payload, dict) else []
+        if not rows:
+            return None
+        df = pd.DataFrame(rows)
+        req = {"date", "open", "high", "low", "close", "volume"}
+        if not req.issubset(df.columns):
+            return None
+        df = df[["date", "open", "high", "low", "close", "volume"]].copy()
+        df["date"] = pd.to_datetime(df["date"])
+        df.sort_values("date", inplace=True)
+        df.set_index("date", inplace=True)
+        for col in ["open", "high", "low", "close", "volume"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        df.dropna(subset=["close", "volume"], inplace=True)
+        return df
+    except Exception:
+        return None
+
+
+def _normalize_ohlc(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.columns = [c.lower() for c in df.columns]
+    df.index = pd.to_datetime(df.index)
+    df.dropna(subset=["close", "volume"], inplace=True)
+    return df
+
+
+def fetch_data_resilient(ticker: str) -> tuple:
+    """VersiÃ³n robusta: Yahoo + fallback FMP, y 1H opcional."""
+    try:
+        t = yf.Ticker(ticker)
+        df_d = t.history(period="6mo", interval="1d", auto_adjust=True)
+        df_h = t.history(period="60d", interval="1h", auto_adjust=True)
+    except Exception as e:
+        log.debug(f"{ticker} - error descarga yahoo: {e}")
+        df_d, df_h = pd.DataFrame(), pd.DataFrame()
+
+    if df_d is not None and not df_d.empty:
+        df_d = _normalize_ohlc(df_d)
+    else:
+        df_d = pd.DataFrame()
+
+    if df_h is not None and not df_h.empty:
+        df_h = _normalize_ohlc(df_h)
+    else:
+        df_h = pd.DataFrame()
+
+    if df_d.empty or len(df_d) < 30:
+        df_fmp = _fmp_daily_ohlc(ticker)
+        if df_fmp is not None and len(df_fmp) >= 30:
+            df_d = _normalize_ohlc(df_fmp)
+
+    if df_d.empty or len(df_d) < 30:
+        return None, None
+
+    if df_h.empty or len(df_h) < 20:
+        df_h = df_d.copy()
+
+    return df_d, df_h
+
 
 def fetch_data(ticker: str) -> tuple:
     """
@@ -330,7 +409,7 @@ def calc_probabilidad(score_conf: int, calidad_setup: int, df_d: pd.DataFrame) -
 # ═══════════════════════════════════════════════════════════════
 
 def analizar_ticker(ticker: str, active_setups: list = None) -> Optional[dict]:
-    df_d, df_h = fetch_data(ticker)
+    df_d, df_h = fetch_data_resilient(ticker)
     if df_d is None:
         return None
 
@@ -512,6 +591,23 @@ def send_telegram(message: str) -> bool:
 #  REGISTRO EXCEL
 # ═══════════════════════════════════════════════════════════════
 
+def _send_google_sheets_rows(rows: list) -> None:
+    """
+    Envia filas a un webhook (Apps Script) para guardar en Google Sheets.
+    Espera la variable de entorno GOOGLE_SHEETS_WEBHOOK_URL.
+    """
+    if not GOOGLE_SHEETS_WEBHOOK_URL or not rows:
+        return
+    try:
+        r = requests.post(GOOGLE_SHEETS_WEBHOOK_URL, json={"rows": rows}, timeout=15)
+        if 200 <= r.status_code < 300:
+            log.info(f"Google Sheets actualizado ({len(rows)} filas).")
+        else:
+            log.warning(f"Google Sheets webhook {r.status_code}: {r.text[:180]}")
+    except Exception as e:
+        log.warning(f"No se pudo enviar a Google Sheets: {e}")
+
+
 def guardar_excel(oportunidades: list, session_name: str):
     """Guarda las oportunidades en un Excel acumulativo."""
     try:
@@ -540,6 +636,7 @@ def guardar_excel(oportunidades: list, session_name: str):
                 cell.font = Font(bold=True, color="FFFFFF")
                 cell.fill = PatternFill("solid", fgColor="1F4E79")
 
+        gs_rows = []
         for op in oportunidades:
             precio  = op["precio"]
             target  = round(precio * 1.10, 2)
@@ -552,8 +649,26 @@ def guardar_excel(oportunidades: list, session_name: str):
                 op["rsi"], op["vol_rel"], op["atr"],
                 op["descripcion"], "Pendiente"
             ])
+            gs_rows.append({
+                "fecha": fecha,
+                "hora": hora,
+                "sesion": session_name,
+                "ticker": op["ticker"],
+                "setup": op["setup"],
+                "confluencias": op["confluencias"],
+                "probabilidad": op["probabilidad"],
+                "precio": precio,
+                "target": target,
+                "stop": stop,
+                "rsi": op["rsi"],
+                "vol_rel": op["vol_rel"],
+                "atr": op["atr"],
+                "descripcion": op["descripcion"],
+                "resultado": "Pendiente",
+            })
 
         wb.save(archivo)
+        _send_google_sheets_rows(gs_rows)
         log.info(f"✅ Excel actualizado: {archivo}")
 
     except Exception as e:
