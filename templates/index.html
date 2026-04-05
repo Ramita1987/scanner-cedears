@@ -39,8 +39,29 @@ nav{position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(6,10,15,.96)
 .hero-sub{font-size:.6rem;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--text3);margin-bottom:4px}
 .hero-title{font-size:1.5rem;font-weight:800;letter-spacing:-.03em}
 .hero-title span{color:var(--green)}
-.inicio-grid{display:grid;grid-template-columns:290px 1fr 260px;gap:1px;background:var(--border);min-height:calc(100vh - 120px)}
-.icol{background:var(--bg);padding:18px 16px;overflow-y:auto}
+.inicio-grid{
+  display:grid;
+  grid-template-columns:300px 300px 1fr;
+  grid-template-areas:
+    "usd usd usd"
+    "idx com news"
+    "cry cry news";
+  gap:1px;
+  background:var(--border);
+  min-height:calc(100vh - 120px)
+}
+.icol{background:var(--bg);padding:14px 14px;overflow-y:auto}
+.band{border-top:3px solid}
+.band-usd{grid-area:usd;border-top-color:#ffd400}
+.band-idx{grid-area:idx;border-top-color:#ff3d57}
+.band-com{grid-area:com;border-top-color:#2979ff}
+.band-cry{grid-area:cry;border-top-color:#ff9100}
+.band-news{grid-area:news;border-top-color:#00e676}
+.usd-row{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:8px}
+.usd-card{background:var(--bg2);border:1px solid #ffd40044;border-radius:7px;padding:8px 10px}
+.usd-name{font-size:.65rem;font-weight:700;color:#ffd400;letter-spacing:.08em;text-transform:uppercase}
+.usd-v{font-family:var(--font-m);font-size:.9rem;margin-top:4px}
+.usd-c{font-family:var(--font-m);font-size:.64rem;color:var(--text2);margin-top:2px}
 .col-title{font-size:.58rem;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--text3);margin-bottom:11px;padding-bottom:6px;border-bottom:1px solid var(--border)}
 .mgroup{margin-bottom:14px}
 .mgroup-title{font-size:.55rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);margin-bottom:5px}
@@ -55,7 +76,7 @@ nav{position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(6,10,15,.96)
 .mv-ticker{font-size:.76rem;font-weight:700}
 .mv-price{font-size:.6rem;color:var(--text3);margin-top:1px}
 .mv-chg{font-family:var(--font-m);font-size:.76rem;font-weight:700}
-.news-item{background:var(--bg2);border:1px solid var(--border);border-radius:7px;padding:11px 12px;margin-bottom:8px;text-decoration:none;display:block;transition:border-color .2s}
+.news-item{background:var(--bg2);border:1px solid #00e67633;border-radius:7px;padding:11px 12px;margin-bottom:8px;text-decoration:none;display:block;transition:border-color .2s}
 .news-item:hover{border-color:var(--border2)}
 .news-source{font-size:.56rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--green);margin-bottom:3px}
 .news-title{font-size:.76rem;font-weight:600;color:var(--text);line-height:1.4;margin-bottom:3px}
@@ -211,8 +232,34 @@ tr:hover td{background:var(--bg3)}
 ::-webkit-scrollbar-track{background:var(--bg)}
 ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
 
-@media(max-width:1100px){.inicio-grid{grid-template-columns:1fr 1fr}.icol:nth-child(2){display:none}}
-@media(max-width:768px){nav{padding:0 12px}.nav-links a{padding:8px 12px;font-size:.8rem}.inicio-grid{grid-template-columns:1fr}.scan-layout{grid-template-columns:1fr}.sec-layout{padding:14px}.watch-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:1100px){
+  .inicio-grid{
+    grid-template-columns:1fr 1fr;
+    grid-template-areas:
+      "usd usd"
+      "idx com"
+      "cry cry"
+      "news news";
+  }
+  .usd-row{grid-template-columns:repeat(2,minmax(150px,1fr))}
+}
+@media(max-width:768px){
+  nav{padding:0 12px}
+  .nav-links a{padding:8px 12px;font-size:.8rem}
+  .inicio-grid{
+    grid-template-columns:1fr;
+    grid-template-areas:
+      "usd"
+      "idx"
+      "com"
+      "cry"
+      "news";
+  }
+  .usd-row{grid-template-columns:1fr}
+  .scan-layout{grid-template-columns:1fr}
+  .sec-layout{padding:14px}
+  .watch-grid{grid-template-columns:1fr 1fr}
+}
 
 /* ── TUTORIAL ── */
 .tut-layout{padding:32px;max-width:980px;margin:0 auto}
@@ -260,21 +307,31 @@ tr:hover td{background:var(--bg3)}
     <div class="hero-title">Mercados globales <span>en tiempo real</span></div>
   </div>
   <div class="inicio-grid">
-    <div class="icol">
-      <div class="col-title">Mercados</div>
-      <div class="mgroup"><div class="mgroup-title">📊 Índices</div><div id="idx-list"><div class="placeholder">Cargando...</div></div></div>
-      <div class="mgroup"><div class="mgroup-title">🛢️ Commodities</div><div id="com-list"><div class="placeholder">Cargando...</div></div></div>
-      <div class="mgroup"><div class="mgroup-title">₿ Crypto</div><div id="crypto-list"><div class="placeholder">Cargando...</div></div></div>
-      <div class="mgroup"><div class="mgroup-title">💵 Dólar Argentina</div><div id="dol-list"><div class="placeholder">Cargando...</div></div></div>
+    <div class="icol band band-usd">
+      <div class="col-title">💵 Dólar Argentina</div>
+      <div id="dol-list" class="usd-row"><div class="placeholder">Cargando...</div></div>
     </div>
-    <div class="icol">
-      <div class="col-title">Noticias del mercado</div>
-      <div id="news-list"><div class="placeholder">Cargando noticias...</div></div>
+
+    <div class="icol band band-idx">
+      <div class="col-title">📊 Índices</div>
+      <div id="idx-list"><div class="placeholder">Cargando...</div></div>
     </div>
-    <div class="icol">
-      <div class="col-title">Movimientos del día</div>
-      <div class="mgroup"><div class="mgroup-title">🚀 Top 5 Ganadoras</div><div id="gainers"><div class="placeholder">Cargando...</div></div></div>
+
+    <div class="icol band band-com">
+      <div class="col-title">🛢️ Commodities</div>
+      <div id="com-list"><div class="placeholder">Cargando...</div></div>
+    </div>
+
+    <div class="icol band band-cry">
+      <div class="col-title">₿ Crypto</div>
+      <div id="crypto-list"><div class="placeholder">Cargando...</div></div>
+      <div class="mgroup" style="margin-top:12px"><div class="mgroup-title">🚀 Top 5 Ganadoras</div><div id="gainers"><div class="placeholder">Cargando...</div></div></div>
       <div class="mgroup"><div class="mgroup-title">📉 Top 5 Perdedoras</div><div id="losers"><div class="placeholder">Cargando...</div></div></div>
+    </div>
+
+    <div class="icol band band-news">
+      <div class="col-title">🗞️ Noticias del mercado</div>
+      <div id="news-list"><div class="placeholder">Cargando noticias...</div></div>
     </div>
   </div>
 </div>
@@ -498,7 +555,7 @@ async function loadMarket(){
     const dol=d.dolar||{};
     document.getElementById('dol-list').innerHTML=
       Object.entries(dol).map(([k,v])=>
-        `<div class="mrow"><span class="mname">Dólar ${k}</span><div><div class="mprice">$${v.venta?.toFixed(0)||'—'}</div><div class="mchg flat">compra $${v.compra?.toFixed(0)||'—'}</div></div></div>`
+        `<div class="usd-card"><div class="usd-name">${k}</div><div class="usd-v">$${v.venta?.toFixed(0)||'—'}</div><div class="usd-c">compra $${v.compra?.toFixed(0)||'—'}</div></div>`
       ).join('')||'<div class="placeholder">Sin datos</div>';
 
   }catch(e){
@@ -741,20 +798,34 @@ function drawChart(data,tickers){
   const canvas=document.getElementById('schart');
   const ctx=canvas.getContext('2d');
 
-  // Build simple arrays - no {x,y} objects to avoid parsing issues
-  const allLabels=[];
-  let maxLen=0;
-  tickers.forEach(t=>{const h=data[t]?.history||[];if(h.length>maxLen)maxLen=h.length;});
-  for(let i=0;i<maxLen;i++) allLabels.push('D'+(i+1));
+  let refHist=[];
+  tickers.forEach(t=>{
+    const h=data[t]?.history||[];
+    if(h.length>refHist.length)refHist=h;
+  });
+  const labels=refHist.map(p=>p.date||'');
+  const maxLen=labels.length;
+  const labelFmt=labels.map(d=>{
+    if(!d)return'';
+    const dt=new Date(d+'T00:00:00');
+    if(Number.isNaN(dt.getTime()))return d;
+    return dt.toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit'});
+  });
 
   const datasets=[];
   tickers.forEach((t,i)=>{
     const hist=data[t]?.history||[];
     if(hist.length<2)return;
-    const base=hist[0].close;
-    // Pad with nulls if shorter than maxLen
+    const map={};
+    hist.forEach(p=>{if(p.date)map[p.date]=p.close;});
+    const firstDate=labels.find(d=>map[d]!==undefined);
+    if(!firstDate)return;
+    const base=map[firstDate];
     const pts=Array(maxLen).fill(null);
-    hist.forEach((p,idx)=>{pts[idx]=parseFloat(((p.close-base)/base*100).toFixed(2));});
+    labels.forEach((d,idx)=>{
+      if(map[d]===undefined)return;
+      pts[idx]=parseFloat(((map[d]-base)/base*100).toFixed(2));
+    });
     datasets.push({
       label:t,
       data:pts,
@@ -778,7 +849,7 @@ function drawChart(data,tickers){
 
   curChart=new Chart(ctx,{
     type:'line',
-    data:{labels:allLabels,datasets},
+    data:{labels:labelFmt,datasets},
     options:{
       responsive:true,
       maintainAspectRatio:false,
