@@ -17,7 +17,7 @@ app = Flask(__name__)
 
 # ── API Keys ─────────────────────────────────────────────────────
 AV_KEY  = os.environ.get("AV_KEY",  "6IFZV2E8RQ6BMJ0L")   # Alpha Vantage
-FMP_KEY = os.environ.get("FMP_KEY", "demo")                 # Financial Modeling Prep (free)
+FMP_KEY = os.environ.get("FMP_KEY", "aiQvIiYs0bc5eOheSFHH2c4kmi4lRVhr")                 # Financial Modeling Prep (free)
 
 # ── Cache global ─────────────────────────────────────────────────
 _cache = {}
