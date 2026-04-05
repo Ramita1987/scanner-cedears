@@ -9,8 +9,10 @@ from flask import Flask, render_template, jsonify, request
 import threading
 import os, sys, time
 import requests
+import feedparser
 from datetime import datetime
 from urllib.parse import quote
+import re
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -155,7 +157,7 @@ def _to_float(value, default=None):
 
 
 def fmp_quote_safe(symbols: list) -> dict:
-    """Cotizaciones FMP usando endpoints /stable."""
+    """Cotizaciones FMP usando /stable con batch cuando es posible."""
     result = {}
     if not symbols:
         return result
@@ -165,7 +167,35 @@ def fmp_quote_safe(symbols: list) -> dict:
         if s and s not in unique:
             unique.append(s)
     headers = {"User-Agent": "Mozilla/5.0"}
+
+    # 1) Batch para acciones/ETFs "simples" (menos requests -> menos 429)
+    simple = [s for s in unique if re.match(r"^[A-Z0-9.\-]+$", s)]
+    if simple:
+        try:
+            sym_csv = ",".join(simple[:80])  # batch grande pero acotado
+            url = f"https://financialmodelingprep.com/stable/batch-quote-short?symbols={sym_csv}&apikey={FMP_KEY}"
+            r = requests.get(url, timeout=15, headers=headers)
+            if r.status_code == 200:
+                payload = r.json()
+                if isinstance(payload, list):
+                    for item in payload:
+                        symbol = str(item.get("symbol", "")).strip()
+                        if not symbol:
+                            continue
+                        price = _to_float(item.get("price"), default=None)
+                        if price is None:
+                            continue
+                        chg_pct = _to_float(item.get("changesPercentage"), default=None)
+                        if chg_pct is None:
+                            chg_pct = _to_float(item.get("change"), default=0.0)
+                        result[symbol] = {"price": round(price, 2), "chg_pct": round(chg_pct, 2)}
+        except Exception:
+            pass
+
+    # 2) Fallback individual para símbolos que no entraron por batch (índices, crypto, etc.)
     for sym in unique:
+        if sym in result:
+            continue
         try:
             enc = quote(sym, safe="")
             url = f"https://financialmodelingprep.com/stable/quote?symbol={enc}&apikey={FMP_KEY}"
@@ -361,7 +391,7 @@ def market():
     Retorna: indices, commodities, crypto, movers, dolar
     Usa FMP (indices/acciones) + dolarapi (dolar)
     """
-    cached = get_cache("market", ttl=300)
+    cached = get_cache("market", ttl=900)
     if cached:
         return jsonify(cached)
 
@@ -552,6 +582,18 @@ def news():
     items = []
     for source, url in feeds:
         try:
+            fp = feedparser.parse(url)
+            if fp.entries:
+                for ent in fp.entries:
+                    title = (ent.get("title") or "").strip()
+                    link = (ent.get("link") or "").strip()
+                    pub = (ent.get("published") or ent.get("updated") or "").strip()
+                    if title and len(title) > 15:
+                        items.append({"source":source,"title":title,"url":link,"time":pub[:16] if pub else ""})
+                    if len(items)>=8:
+                        break
+                if len(items)>=8:
+                    break
             r    = requests.get(url, timeout=6, headers={"User-Agent":"Mozilla/5.0"})
             root = ET.fromstring(r.content)
             for item in root.iter("item"):
