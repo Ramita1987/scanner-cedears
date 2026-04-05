@@ -31,6 +31,12 @@ def get_cache(key, ttl=600):
     return None
 
 def set_cache(key, val):
+    """Solo cachea si hay datos reales."""
+    if val is None:
+        return val
+    # No cachear listas/dicts vacíos
+    if isinstance(val, (list, dict)) and len(val) == 0:
+        return val
     _cache[key] = (val, datetime.now())
     return val
 
@@ -416,6 +422,28 @@ def news():
     result = items[:5]
     set_cache("news", result)
     return jsonify(result)
+
+
+@app.route("/clear_cache")
+def clear_cache():
+    """Limpia el cache en memoria — llamar después de cambiar API keys."""
+    _cache.clear()
+    return jsonify({"ok": True, "message": "Cache limpiado"})
+
+
+@app.route("/debug_fmp")
+def debug_fmp():
+    """Testea FMP directamente y muestra la respuesta cruda."""
+    try:
+        url = f"https://financialmodelingprep.com/api/v3/quote/AAPL,^GSPC,BTCUSD?apikey={FMP_KEY}"
+        r   = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        return jsonify({
+            "status":   r.status_code,
+            "fmp_key":  FMP_KEY[:8] + "...",
+            "response": r.json() if r.status_code == 200 else r.text[:500]
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)})
 
 
 if __name__ == "__main__":
