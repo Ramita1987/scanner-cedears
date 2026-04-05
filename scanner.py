@@ -47,14 +47,19 @@ def _fmp_daily_ohlc(ticker: str) -> Optional[pd.DataFrame]:
     try:
         enc = quote(ticker, safe="")
         url = (
-            f"https://financialmodelingprep.com/api/v3/historical-price-full/{enc}"
-            f"?timeseries=220&apikey={FMP_KEY}"
+            f"https://financialmodelingprep.com/stable/historical-price-eod/full"
+            f"?symbol={enc}&apikey={FMP_KEY}"
         )
         r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
         if r.status_code != 200:
             return None
         payload = r.json()
-        rows = payload.get("historical", []) if isinstance(payload, dict) else []
+        if isinstance(payload, list):
+            rows = payload
+        elif isinstance(payload, dict):
+            rows = payload.get("historical", [])
+        else:
+            rows = []
         if not rows:
             return None
         df = pd.DataFrame(rows)
