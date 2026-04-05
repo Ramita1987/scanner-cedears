@@ -41,11 +41,11 @@ nav{position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(6,10,15,.96)
 .hero-title span{color:var(--green)}
 .inicio-grid{
   display:grid;
-  grid-template-columns:300px 300px 1fr;
+  grid-template-columns:290px 290px 1fr 285px;
   grid-template-areas:
-    "usd usd usd"
-    "idx com news"
-    "cry cry news";
+    "usd usd usd usd"
+    "idx com news top"
+    "cry cry news top";
   gap:1px;
   background:var(--border);
   min-height:calc(100vh - 120px)
@@ -57,6 +57,9 @@ nav{position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(6,10,15,.96)
 .band-com{grid-area:com;border-top-color:#2979ff}
 .band-cry{grid-area:cry;border-top-color:#ff9100}
 .band-news{grid-area:news;border-top-color:#00e676}
+.band-top{grid-area:top;border-top-color:#a855f7}
+.band-top .mover-item{border-color:#a855f733}
+.band-top .mgroup-title{color:#c084fc}
 .usd-row{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:8px}
 .usd-card{background:var(--bg2);border:1px solid #ffd40044;border-radius:7px;padding:8px 10px}
 .usd-name{font-size:.65rem;font-weight:700;color:#ffd400;letter-spacing:.08em;text-transform:uppercase}
@@ -239,7 +242,7 @@ tr:hover td{background:var(--bg3)}
       "usd usd"
       "idx com"
       "cry cry"
-      "news news";
+      "news top";
   }
   .usd-row{grid-template-columns:repeat(2,minmax(150px,1fr))}
 }
@@ -253,7 +256,8 @@ tr:hover td{background:var(--bg3)}
       "idx"
       "com"
       "cry"
-      "news";
+      "news"
+      "top";
   }
   .usd-row{grid-template-columns:1fr}
   .scan-layout{grid-template-columns:1fr}
@@ -330,7 +334,11 @@ tr:hover td{background:var(--bg3)}
     <div class="icol band band-news">
       <div class="col-title">🗞️ Noticias del mercado</div>
       <div id="news-list"><div class="placeholder">Cargando noticias...</div></div>
-      <div class="mgroup" style="margin-top:14px"><div class="mgroup-title">🚀 Top 5 Ganadoras</div><div id="gainers"><div class="placeholder">Cargando...</div></div></div>
+    </div>
+
+    <div class="icol band band-top">
+      <div class="col-title">📈 Movimientos del día</div>
+      <div class="mgroup"><div class="mgroup-title">🚀 Top 5 Ganadoras</div><div id="gainers"><div class="placeholder">Cargando...</div></div></div>
       <div class="mgroup"><div class="mgroup-title">📉 Top 5 Perdedoras</div><div id="losers"><div class="placeholder">Cargando...</div></div></div>
     </div>
   </div>
