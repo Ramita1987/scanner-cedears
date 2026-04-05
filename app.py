@@ -251,6 +251,61 @@ def yf_quote_first(symbols: list) -> tuple:
     return {}, ""
 
 
+def yf_quote_bulk(symbols: list) -> dict:
+    """Cotizaciones Yahoo en una sola descarga para reducir fallos/rate-limit."""
+    out = {}
+    syms = []
+    for s in symbols:
+        ss = (s or "").strip()
+        if ss and ss not in syms:
+            syms.append(ss)
+    if not syms:
+        return out
+    try:
+        data = yf.download(
+            tickers=" ".join(syms),
+            period="7d",
+            interval="1d",
+            auto_adjust=True,
+            progress=False,
+            threads=False,
+            group_by="ticker",
+        )
+        if data is None or data.empty:
+            return out
+
+        # Caso 1 símbolo: columnas simples (Open/High/Low/Close...)
+        if "Close" in data.columns:
+            closes = data["Close"].dropna()
+            if len(closes) >= 1:
+                last = float(closes.iloc[-1])
+                prev = float(closes.iloc[-2]) if len(closes) >= 2 else last
+                chg = round((last - prev) / prev * 100, 2) if prev else 0.0
+                out[syms[0]] = {"price": round(last, 2), "chg_pct": chg}
+            return out
+
+        # Caso múltiple: MultiIndex [ticker][field]
+        for sym in syms:
+            try:
+                if sym not in data.columns.get_level_values(0):
+                    continue
+                sdf = data[sym]
+                if "Close" not in sdf.columns:
+                    continue
+                closes = sdf["Close"].dropna()
+                if len(closes) < 1:
+                    continue
+                last = float(closes.iloc[-1])
+                prev = float(closes.iloc[-2]) if len(closes) >= 2 else last
+                chg = round((last - prev) / prev * 100, 2) if prev else 0.0
+                out[sym] = {"price": round(last, 2), "chg_pct": chg}
+            except Exception:
+                continue
+    except Exception:
+        return out
+    return out
+
+
 def av_quote_first(symbols: list) -> tuple:
     """Fallback Alpha Vantage para cotización."""
     for sym in symbols:
@@ -443,6 +498,116 @@ def historial():
     return jsonify(get_historial())
 
 
+def build_market_payload() -> dict:
+    cached = get_cache("market", ttl=240)
+    if cached:
+        return cached
+
+    idx_defs = [
+        {"n": "S&P 500", "s": "^GSPC", "fmp": ["^GSPC", "SPY"], "yf": ["^GSPC", "SPY"], "av": ["SPY"]},
+        {"n": "NASDAQ", "s": "^IXIC", "fmp": ["^IXIC", "QQQ"], "yf": ["^IXIC", "QQQ"], "av": ["QQQ"]},
+        {"n": "Dow Jones", "s": "^DJI", "fmp": ["^DJI", "DIA"], "yf": ["^DJI", "DIA"], "av": ["DIA"]},
+        {"n": "Russell 2000", "s": "^RUT", "fmp": ["^RUT", "IWM"], "yf": ["^RUT", "IWM"], "av": ["IWM"]},
+        {"n": "VIX", "s": "^VIX", "fmp": ["^VIX", "VXX"], "yf": ["^VIX", "VXX"], "av": ["VXX"]},
+        {"n": "Merval", "s": "^MERV", "fmp": ["^MERV", "ARGT"], "yf": ["^MERV", "ARGT"], "av": ["ARGT"]},
+    ]
+    com_defs = [
+        {"n": "Oro", "fmp": ["GCUSD", "GLD"], "yf": ["GC=F", "GLD"], "av": ["GLD"]},
+        {"n": "Petróleo WTI", "fmp": ["CLUSD", "USO"], "yf": ["CL=F", "USO"], "av": ["USO"]},
+        {"n": "Plata", "fmp": ["SIUSD", "SLV"], "yf": ["SI=F", "SLV"], "av": ["SLV"]},
+        {"n": "Cobre", "fmp": ["HGUSD", "CPER"], "yf": ["HG=F", "CPER"], "av": ["CPER"]},
+    ]
+    cry_defs = [
+        {"n": "Bitcoin (BTC)", "fmp": ["BTCUSD", "IBIT", "MSTR"], "yf": ["BTC-USD", "IBIT", "MSTR"], "av": ["IBIT", "MSTR"]},
+        {"n": "Ethereum (ETH)", "fmp": ["ETHUSD", "ETHA", "ETHE"], "yf": ["ETH-USD", "ETHA", "ETHE"], "av": ["ETHA", "ETHE"]},
+    ]
+    wl_syms = [
+        "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA",
+        "JPM", "BAC", "V", "MA", "XOM", "CVX", "JNJ", "UNH",
+        "GGAL", "YPF", "MELI", "NU", "BABA",
+    ]
+
+    fmp_pool = []
+    yf_pool = []
+    for row in idx_defs + com_defs + cry_defs:
+        fmp_pool.extend(row["fmp"])
+        yf_pool.extend(row["yf"])
+    yf_pool.extend(wl_syms)
+
+    market_fmp = fmp_quote_safe(fmp_pool)
+    market_yf = yf_quote_bulk(yf_pool)
+    movers_fmp = fmp_quote_safe(wl_syms)
+
+    def pick_market(row):
+        q, src = _pick_quote(market_fmp, row["fmp"])
+        if q:
+            return q, f"FMP:{src}"
+        q, src = _pick_quote(market_yf, row["yf"])
+        if q:
+            return q, f"YF:{src}"
+        q, src = av_quote_first(row["av"])
+        if q:
+            return q, f"AV:{src}"
+        return {}, ""
+
+    indices = []
+    for row in idx_defs:
+        q, src = pick_market(row)
+        indices.append({"n": row["n"], "s": row["s"], "src": src, "d": q})
+
+    commodities = []
+    for row in com_defs:
+        q, src = pick_market(row)
+        commodities.append({"n": row["n"], "src": src, "d": q})
+
+    crypto = []
+    for row in cry_defs:
+        q, src = pick_market(row)
+        crypto.append({"n": row["n"], "src": src, "d": q})
+
+    movers_data = {}
+    for sym in wl_syms:
+        if sym in movers_fmp and movers_fmp[sym].get("price") is not None:
+            movers_data[sym] = movers_fmp[sym]
+            continue
+        if sym in market_yf and market_yf[sym].get("price") is not None:
+            movers_data[sym] = market_yf[sym]
+            continue
+        q, _ = av_quote_first([sym])
+        if q:
+            movers_data[sym] = q
+
+    movers = []
+    for s in wl_syms:
+        q = movers_data.get(s, {})
+        if q.get("chg_pct") is None:
+            continue
+        movers.append({"s": s, "price": q.get("price"), "chg_pct": q.get("chg_pct")})
+    movers.sort(key=lambda x: x["chg_pct"], reverse=True)
+
+    result = {
+        "indices": indices,
+        "commodities": commodities,
+        "crypto": crypto,
+        "gainers": movers[:5],
+        "losers": movers[-5:][::-1],
+        "dolar": dolarapi(),
+    }
+
+    has_data = any(i.get("d", {}).get("price") is not None for i in indices + commodities + crypto)
+    has_data = has_data or len(movers) > 0
+    if has_data:
+        set_cache("market", result)
+        set_cache("market_last_ok", result)
+        return result
+
+    last_ok = get_cache("market_last_ok", ttl=86400)
+    if last_ok:
+        last_ok["dolar"] = result.get("dolar", {})
+        return last_ok
+    return result
+
+
 @app.route("/market")
 def market():
     """
@@ -450,6 +615,8 @@ def market():
     Retorna: indices, commodities, crypto, movers, dolar
     Usa FMP (indices/acciones) + dolarapi (dolar)
     """
+    return jsonify(build_market_payload())
+
     cached = get_cache("market", ttl=900)
     if cached:
         return jsonify(cached)
