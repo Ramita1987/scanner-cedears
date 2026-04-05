@@ -10,6 +10,7 @@ import threading
 import os, sys, time
 import requests
 from datetime import datetime
+from urllib.parse import quote
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -138,6 +139,92 @@ def av_daily(symbol: str) -> list:
         return set_cache(f"avd_{symbol}", hist[-130:])
     except Exception:
         return []
+
+
+def _to_float(value, default=None):
+    try:
+        if value is None:
+            return default
+        if isinstance(value, str):
+            value = value.replace("%", "").strip()
+            if not value:
+                return default
+        return float(value)
+    except Exception:
+        return default
+
+
+def fmp_quote_safe(symbols: list) -> dict:
+    """Cotizaciones FMP con parsing tolerante y lotes pequeños."""
+    result = {}
+    if not symbols:
+        return result
+    unique = []
+    for sym in symbols:
+        s = (sym or "").strip()
+        if s and s not in unique:
+            unique.append(s)
+    headers = {"User-Agent": "Mozilla/5.0"}
+    for i in range(0, len(unique), 20):
+        chunk = unique[i:i + 20]
+        try:
+            encoded = ",".join(quote(sym, safe="") for sym in chunk)
+            url = f"https://financialmodelingprep.com/api/v3/quote/{encoded}?apikey={FMP_KEY}"
+            r = requests.get(url, timeout=12, headers=headers)
+            if r.status_code != 200:
+                continue
+            payload = r.json()
+            if not isinstance(payload, list):
+                continue
+            for item in payload:
+                sym = str(item.get("symbol", "")).strip()
+                if not sym:
+                    continue
+                price = _to_float(item.get("price"), default=None)
+                if price is None:
+                    continue
+                chg_pct = _to_float(item.get("changesPercentage"), default=None)
+                if chg_pct is None:
+                    chg_pct = _to_float(item.get("change"), default=0.0)
+                result[sym] = {"price": round(price, 2), "chg_pct": round(chg_pct, 2)}
+        except Exception:
+            continue
+    return result
+
+
+def _pick_quote(data: dict, candidates: list) -> tuple:
+    for sym in candidates:
+        if sym in data and data[sym].get("price") is not None:
+            return data[sym], sym
+    return {}, ""
+
+
+def fmp_daily(symbol: str, timeseries: int = 130) -> list:
+    """Histórico diario FMP con fallback a Alpha Vantage."""
+    cached = get_cache(f"fmpd_{symbol}", ttl=3600)
+    if cached:
+        return cached
+    try:
+        enc = quote(symbol, safe="")
+        url = (
+            f"https://financialmodelingprep.com/api/v3/historical-price-full/{enc}"
+            f"?timeseries={timeseries}&serietype=line&apikey={FMP_KEY}"
+        )
+        r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code == 200:
+            payload = r.json()
+            rows = payload.get("historical", []) if isinstance(payload, dict) else []
+            hist = []
+            for row in reversed(rows):
+                date = row.get("date")
+                close = _to_float(row.get("close"), default=None)
+                if date and close is not None:
+                    hist.append({"date": date, "close": round(close, 2)})
+            if len(hist) >= 5:
+                return set_cache(f"fmpd_{symbol}", hist[-timeseries:])
+    except Exception:
+        pass
+    return av_daily(symbol)
 
 
 def dolarapi() -> dict:
@@ -276,6 +363,64 @@ def market():
     if cached:
         return jsonify(cached)
 
+    idx_defs = [
+        {"n": "S&P 500", "s": "^GSPC", "candidates": ["^GSPC", "SPY"]},
+        {"n": "NASDAQ", "s": "^IXIC", "candidates": ["^IXIC", "QQQ"]},
+        {"n": "Dow Jones", "s": "^DJI", "candidates": ["^DJI", "DIA"]},
+        {"n": "Russell 2000", "s": "^RUT", "candidates": ["^RUT", "IWM"]},
+        {"n": "VIX", "s": "^VIX", "candidates": ["^VIX", "VXX"]},
+        {"n": "Merval", "s": "^MERV", "candidates": ["^MERV", "ARGT"]},
+    ]
+    com_defs = [
+        {"n": "Oro", "candidates": ["GCUSD", "GLD"]},
+        {"n": "Petróleo WTI", "candidates": ["CLUSD", "USO"]},
+        {"n": "Plata", "candidates": ["SIUSD", "SLV"]},
+        {"n": "Cobre", "candidates": ["HGUSD", "CPER"]},
+    ]
+    cry_defs = [
+        {"n": "Bitcoin (BTC)", "candidates": ["BTCUSD", "IBIT", "MSTR"]},
+        {"n": "Ethereum (ETH)", "candidates": ["ETHUSD", "ETHA", "ETHE"]},
+    ]
+
+    pool = []
+    for row in idx_defs + com_defs + cry_defs:
+        pool.extend(row["candidates"])
+    market_data = fmp_quote_safe(pool)
+
+    indices = []
+    for row in idx_defs:
+        q, src = _pick_quote(market_data, row["candidates"])
+        indices.append({"n": row["n"], "s": row["s"], "src": src, "d": q})
+
+    commodities = []
+    for row in com_defs:
+        q, src = _pick_quote(market_data, row["candidates"])
+        commodities.append({"n": row["n"], "src": src, "d": q})
+
+    crypto = []
+    for row in cry_defs:
+        q, src = _pick_quote(market_data, row["candidates"])
+        crypto.append({"n": row["n"], "src": src, "d": q})
+
+    wl_syms = ["AAPL","MSFT","GOOGL","AMZN","NVDA","META","TSLA",
+               "JPM","BAC","V","MA","XOM","CVX","JNJ","UNH",
+               "GGAL","YPF","MELI","NU","BABA"]
+    wl_data = fmp_quote_safe(wl_syms)
+    movers = [{"s": s, "price": wl_data[s]["price"], "chg_pct": wl_data[s]["chg_pct"]}
+              for s in wl_syms if s in wl_data and wl_data[s].get("chg_pct") is not None]
+    movers.sort(key=lambda x: x["chg_pct"], reverse=True)
+
+    result = {
+        "indices": indices,
+        "commodities": commodities,
+        "crypto": crypto,
+        "gainers": movers[:5],
+        "losers": movers[-5:][::-1],
+        "dolar": dolarapi(),
+    }
+    set_cache("market", result)
+    return jsonify(result)
+
     # ── Índices via FMP ──────────────────────────────────────
     idx_syms = ["^GSPC","^IXIC","^DJI","^RUT","^VIX","MERVAL"]
     idx_data = fmp_quote(idx_syms)
@@ -333,7 +478,7 @@ def market():
 
 @app.route("/sector_data")
 def sector_data():
-    """Historial 6 meses via Alpha Vantage."""
+    """Historial 6 meses via FMP (fallback a Alpha Vantage)."""
     tickers = [t.strip() for t in request.args.get("tickers","").split(",") if t.strip()]
     result  = {}
     for sym in tickers:
@@ -341,7 +486,7 @@ def sector_data():
         if cached:
             result[sym] = cached
             continue
-        hist = av_daily(sym)
+        hist = fmp_daily(sym)
         if len(hist) < 5:
             continue
         last = hist[-1]["close"]
@@ -354,14 +499,14 @@ def sector_data():
 
 @app.route("/watchlist_data")
 def watchlist_data():
-    """RSI, MACD via Alpha Vantage."""
+    """RSI, MACD vía histórico diario FMP (fallback a Alpha Vantage)."""
     tickers = [t.strip() for t in request.args.get("tickers","").split(",") if t.strip()]
     if not tickers: return jsonify({})
     result = {}
     import pandas as pd
     for sym in tickers:
         try:
-            hist = av_daily(sym)
+            hist = fmp_daily(sym)
             if len(hist) < 26: continue
             closes = pd.Series([h["close"] for h in hist])
             last    = float(closes.iloc[-1])
