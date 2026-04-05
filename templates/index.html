@@ -441,7 +441,7 @@ tr:hover td{background:var(--bg3)}
 
   </div>
 </div>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <script>
 
 // ── Nav ──────────────────────────────────────────────────
@@ -464,54 +464,55 @@ function cc(v){return(v>0)?'up':(v<0)?'down':'flat';}
 function cs(v){if(v===undefined||v===null||isNaN(v))return'—';return v>0?`+${v.toFixed(2)}%`:`${v.toFixed(2)}%`;}
 
 async function loadMarket(){
-  // Fetch in small batches with delay to avoid Yahoo rate limits
-  async function fetchBatch(syms){
-    try{
-      const r=await fetch('/yahoo?symbols='+encodeURIComponent(syms.join(',')));
-      if(r.ok)return await r.json();
-    }catch{}
-    return {};
+  try{
+    const r=await fetch('/market');
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const d=await r.json();
+
+    // Indices
+    document.getElementById('idx-list').innerHTML=
+      (d.indices||[]).map(i=>mrow(i.n,i.d?.price,i.d?.chg_pct)).join('')||
+      '<div class="placeholder">Sin datos</div>';
+
+    // Commodities
+    document.getElementById('com-list').innerHTML=
+      (d.commodities||[]).map(i=>mrow(i.n,i.d?.price,i.d?.chg_pct)).join('')||
+      '<div class="placeholder">Sin datos</div>';
+
+    // Crypto
+    document.getElementById('crypto-list').innerHTML=
+      (d.crypto||[]).map(i=>mrow(i.n,i.d?.price,i.d?.chg_pct)).join('')||
+      '<div class="placeholder">Sin datos</div>';
+
+    // Gainers
+    document.getElementById('gainers').innerHTML=
+      (d.gainers||[]).map(m=>mvrow(m.s,m.price,m.chg_pct)).join('')||
+      '<div class="placeholder">Sin datos</div>';
+
+    // Losers
+    document.getElementById('losers').innerHTML=
+      (d.losers||[]).map(m=>mvrow(m.s,m.price,m.chg_pct)).join('')||
+      '<div class="placeholder">Sin datos</div>';
+
+    // Dolar
+    const dol=d.dolar||{};
+    document.getElementById('dol-list').innerHTML=
+      Object.entries(dol).map(([k,v])=>
+        `<div class="mrow"><span class="mname">Dólar ${k}</span><div><div class="mprice">$${v.venta?.toFixed(0)||'—'}</div><div class="mchg flat">compra $${v.compra?.toFixed(0)||'—'}</div></div></div>`
+      ).join('')||'<div class="placeholder">Sin datos</div>';
+
+  }catch(e){
+    console.error('loadMarket error:',e);
+    ['idx-list','com-list','crypto-list','gainers','losers'].forEach(id=>{
+      document.getElementById(id).innerHTML='<div class="placeholder">Error cargando datos</div>';
+    });
   }
-
-  const b1=[...IDX.map(x=>x.s),...COM.map(x=>x.s),...CRYPTO.map(x=>x.s)];
-  const b2=WL.slice(0,10);
-  const b3=WL.slice(10);
-
-  const d1=await fetchBatch(b1);
-  renderMarket(d1);
-
-  setTimeout(async()=>{
-    const d2=await fetchBatch(b2);
-    setTimeout(async()=>{
-      const d3=await fetchBatch(b3);
-      renderMovers({...d2,...d3});
-    },2000);
-  },1500);
-}
-
-function renderMarket(data){
-  document.getElementById('idx-list').innerHTML=IDX.map(i=>{const d=data[i.s]||{};return mrow(i.n,d.price,d.chg_pct);}).join('')||'<div class="placeholder">Sin datos</div>';
-  document.getElementById('com-list').innerHTML=COM.map(i=>{const d=data[i.s]||{};return mrow(i.n,d.price,d.chg_pct);}).join('')||'<div class="placeholder">Sin datos</div>';
-  document.getElementById('crypto-list').innerHTML=CRYPTO.map(i=>{const d=data[i.s]||{};return mrow(i.n,d.price,d.chg_pct);}).join('')||'<div class="placeholder">Sin datos</div>';
-}
-
-function renderMovers(data){
-  const mv=WL.filter(s=>data[s]&&data[s].chg_pct!==undefined).map(s=>({s,chg:data[s].chg_pct,p:data[s].price})).sort((a,b)=>b.chg-a.chg);
-  document.getElementById('gainers').innerHTML=mv.slice(0,5).map(m=>mvrow(m.s,m.p,m.chg)).join('')||'<div class="placeholder">Sin datos</div>';
-  document.getElementById('losers').innerHTML=mv.slice(-5).reverse().map(m=>mvrow(m.s,m.p,m.chg)).join('')||'<div class="placeholder">Sin datos</div>';
 }
 
 function mrow(n,price,chg){return`<div class="mrow"><span class="mname">${n}</span><div><div class="mprice">${fp(price)}</div><div class="mchg ${cc(chg)}">${cs(chg)}</div></div></div>`;}
 function mvrow(sym,p,chg){return`<div class="mover-item"><div><div class="mv-ticker">${sym}</div><div class="mv-price">$${fp(p)}</div></div><div class="mv-chg ${cc(chg)}">${cs(chg)}</div></div>`;}
 
-async function loadDolar(){
-  try{
-    const r=await fetch('https://dolarapi.com/v1/dolares');if(!r.ok)return;
-    const data=await r.json();
-    const tipos={oficial:'Oficial',blue:'Blue',contadoconliqui:'CCL',bolsa:'MEP'};
-    document.getElementById('dol-list').innerHTML=data.filter(d=>tipos[d.casa]).map(d=>`<div class="mrow"><span class="mname">Dólar ${tipos[d.casa]}</span><div><div class="mprice">$${d.venta?.toFixed(0)||'—'}</div><div class="mchg flat">compra $${d.compra?.toFixed(0)||'—'}</div></div></div>`).join('');
-  }catch{}
-}
+// loadDolar — now handled by /market endpoint
 
 async function loadNews(){
   try{
@@ -826,11 +827,9 @@ function renderStocks(data,tickers){
 // ── Init ─────────────────────────────────────────────────
 // Carga diferida para acelerar la página
 setTimeout(loadMarket, 100);
-setTimeout(loadDolar,  500);
 setTimeout(loadNews,   800);
 setTimeout(loadHist,  1000);
 setInterval(loadMarket, 120000);
-setInterval(loadDolar,  120000);
 setInterval(loadNews,   300000);
 </script>
 </body>
