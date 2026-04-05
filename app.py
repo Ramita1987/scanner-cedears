@@ -251,6 +251,15 @@ def yf_quote_first(symbols: list) -> tuple:
     return {}, ""
 
 
+def av_quote_first(symbols: list) -> tuple:
+    """Fallback Alpha Vantage para cotización."""
+    for sym in symbols:
+        q = av_quote_single(sym)
+        if q and q.get("price") is not None:
+            return q, sym
+    return {}, ""
+
+
 def yf_daily(symbol: str, timeseries: int = 130) -> list:
     """Fallback Yahoo para historial diario."""
     cached = get_cache(f"yfd_{symbol}", ttl=3600)
@@ -486,6 +495,23 @@ def market():
         "Bitcoin (BTC)": ["BTC-USD", "IBIT", "MSTR"],
         "Ethereum (ETH)": ["ETH-USD", "ETHE", "ETHA"],
     }
+    idx_av = {
+        "S&P 500": ["SPY"],
+        "NASDAQ": ["QQQ"],
+        "Dow Jones": ["DIA"],
+        "Russell 2000": ["IWM"],
+        "VIX": ["VXX"],
+        "Merval": ["ARGT"],
+    }
+    com_av = {
+        "Oro": ["GLD"],
+        "Plata": ["SLV"],
+        "Cobre": ["CPER"],
+    }
+    cry_av = {
+        "Bitcoin (BTC)": ["IBIT", "MSTR"],
+        "Ethereum (ETH)": ["ETHE", "ETHA"],
+    }
 
     indices = []
     for row in idx_defs:
@@ -494,6 +520,10 @@ def market():
             q, ys = yf_quote_first(idx_yf.get(row["n"], []))
             if q:
                 src = f"YF:{ys}"
+        if not q:
+            q, avs = av_quote_first(idx_av.get(row["n"], []))
+            if q:
+                src = f"AV:{avs}"
         indices.append({"n": row["n"], "s": row["s"], "src": src, "d": q})
 
     commodities = []
@@ -503,6 +533,13 @@ def market():
             q, ys = yf_quote_first(com_yf.get(row["n"], []))
             if q:
                 src = f"YF:{ys}"
+        if not q:
+            av_list = com_av.get(row["n"], [])
+            if not av_list and "Petr" in row["n"]:
+                av_list = ["USO"]
+            q, avs = av_quote_first(av_list)
+            if q:
+                src = f"AV:{avs}"
         commodities.append({"n": row["n"], "src": src, "d": q})
 
     crypto = []
@@ -512,6 +549,10 @@ def market():
             q, ys = yf_quote_first(cry_yf.get(row["n"], []))
             if q:
                 src = f"YF:{ys}"
+        if not q:
+            q, avs = av_quote_first(cry_av.get(row["n"], []))
+            if q:
+                src = f"AV:{avs}"
         crypto.append({"n": row["n"], "src": src, "d": q})
 
     wl_syms = ["AAPL","MSFT","GOOGL","AMZN","NVDA","META","TSLA",
@@ -523,6 +564,10 @@ def market():
             q, _ = yf_quote_first([s])
             if q:
                 wl_data[s] = q
+            else:
+                q, _ = av_quote_first([s])
+                if q:
+                    wl_data[s] = q
     movers = [{"s": s, "price": wl_data[s]["price"], "chg_pct": wl_data[s]["chg_pct"]}
               for s in wl_syms if s in wl_data and wl_data[s].get("chg_pct") is not None]
     movers.sort(key=lambda x: x["chg_pct"], reverse=True)
