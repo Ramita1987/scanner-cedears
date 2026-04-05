@@ -155,7 +155,7 @@ def _to_float(value, default=None):
 
 
 def fmp_quote_safe(symbols: list) -> dict:
-    """Cotizaciones FMP con parsing tolerante y lotes pequeños."""
+    """Cotizaciones FMP usando endpoints /stable."""
     result = {}
     if not symbols:
         return result
@@ -165,28 +165,25 @@ def fmp_quote_safe(symbols: list) -> dict:
         if s and s not in unique:
             unique.append(s)
     headers = {"User-Agent": "Mozilla/5.0"}
-    for i in range(0, len(unique), 20):
-        chunk = unique[i:i + 20]
+    for sym in unique:
         try:
-            encoded = ",".join(quote(sym, safe="") for sym in chunk)
-            url = f"https://financialmodelingprep.com/api/v3/quote/{encoded}?apikey={FMP_KEY}"
+            enc = quote(sym, safe="")
+            url = f"https://financialmodelingprep.com/stable/quote?symbol={enc}&apikey={FMP_KEY}"
             r = requests.get(url, timeout=12, headers=headers)
             if r.status_code != 200:
                 continue
             payload = r.json()
-            if not isinstance(payload, list):
+            if not isinstance(payload, list) or not payload:
                 continue
-            for item in payload:
-                sym = str(item.get("symbol", "")).strip()
-                if not sym:
-                    continue
-                price = _to_float(item.get("price"), default=None)
-                if price is None:
-                    continue
-                chg_pct = _to_float(item.get("changesPercentage"), default=None)
-                if chg_pct is None:
-                    chg_pct = _to_float(item.get("change"), default=0.0)
-                result[sym] = {"price": round(price, 2), "chg_pct": round(chg_pct, 2)}
+            item = payload[0]
+            symbol = str(item.get("symbol", sym)).strip() or sym
+            price = _to_float(item.get("price"), default=None)
+            if price is None:
+                continue
+            chg_pct = _to_float(item.get("changesPercentage"), default=None)
+            if chg_pct is None:
+                chg_pct = _to_float(item.get("change"), default=0.0)
+            result[symbol] = {"price": round(price, 2), "chg_pct": round(chg_pct, 2)}
         except Exception:
             continue
     return result
@@ -207,13 +204,18 @@ def fmp_daily(symbol: str, timeseries: int = 130) -> list:
     try:
         enc = quote(symbol, safe="")
         url = (
-            f"https://financialmodelingprep.com/api/v3/historical-price-full/{enc}"
-            f"?timeseries={timeseries}&serietype=line&apikey={FMP_KEY}"
+            f"https://financialmodelingprep.com/stable/historical-price-eod/full"
+            f"?symbol={enc}&apikey={FMP_KEY}"
         )
         r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
         if r.status_code == 200:
             payload = r.json()
-            rows = payload.get("historical", []) if isinstance(payload, dict) else []
+            if isinstance(payload, list):
+                rows = payload
+            elif isinstance(payload, dict):
+                rows = payload.get("historical", [])
+            else:
+                rows = []
             hist = []
             for row in reversed(rows):
                 date = row.get("date")
@@ -580,7 +582,7 @@ def clear_cache():
 def debug_fmp():
     """Testea FMP directamente y muestra la respuesta cruda."""
     try:
-        url = f"https://financialmodelingprep.com/api/v3/quote/AAPL,^GSPC,BTCUSD?apikey={FMP_KEY}"
+        url = f"https://financialmodelingprep.com/stable/quote?symbol=AAPL&apikey={FMP_KEY}"
         r   = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
         return jsonify({
             "status":   r.status_code,
