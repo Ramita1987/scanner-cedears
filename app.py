@@ -1,14 +1,13 @@
 """
 ╔══════════════════════════════════════════════════════════════╗
-║         SCANNER CEDEARS — INTERFAZ WEB                      ║
+║         SCANNER CEDEARS — INTERFAZ WEB v2                   ║
 ║         Flask App para Render.com                           ║
 ╚══════════════════════════════════════════════════════════════╝
 """
 
 from flask import Flask, render_template, jsonify, request
 import threading
-import os
-import sys
+import os, sys, time
 import requests
 from datetime import datetime
 
@@ -16,20 +15,144 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 app = Flask(__name__)
 
-# ── Alpha Vantage API Key ────────────────────────────────────────
-AV_KEY = os.environ.get("AV_KEY", "6IFZV2E8RQ6BMJ0L")
+# ── API Keys ─────────────────────────────────────────────────────
+AV_KEY  = os.environ.get("AV_KEY",  "6IFZV2E8RQ6BMJ0L")   # Alpha Vantage
+FMP_KEY = os.environ.get("FMP_KEY", "demo")                 # Financial Modeling Prep (free)
 
-# ── Estado global del scanner ────────────────────────────────────
+# ── Cache global ─────────────────────────────────────────────────
+_cache = {}
+
+def get_cache(key, ttl=600):
+    """Retorna valor cacheado si no expiró (ttl en segundos)."""
+    if key in _cache:
+        val, ts = _cache[key]
+        if (datetime.now() - ts).seconds < ttl:
+            return val
+    return None
+
+def set_cache(key, val):
+    _cache[key] = (val, datetime.now())
+    return val
+
+# ── Estado scanner ────────────────────────────────────────────────
 scanner_state = {
-    "running": False,
-    "session": "",
-    "progress": 0,
-    "total": 0,
-    "current_ticker": "",
-    "results": [],
-    "log": [],
-    "last_run": None,
+    "running": False, "session": "", "progress": 0, "total": 0,
+    "current_ticker": "", "results": [], "log": [], "last_run": None,
 }
+
+
+# ═══════════════════════════════════════════════════════════════
+#  FUENTES DE DATOS — Sin Yahoo Finance
+# ═══════════════════════════════════════════════════════════════
+
+def fmp_quote(symbols: list) -> dict:
+    """
+    Financial Modeling Prep — cotizaciones en tiempo real.
+    Plan free: funciona con 'demo' para tickers populares.
+    Endpoint: https://financialmodelingprep.com/api/v3/quote/AAPL,MSFT
+    """
+    result = {}
+    if not symbols:
+        return result
+    try:
+        syms_str = ",".join(symbols)
+        url = f"https://financialmodelingprep.com/api/v3/quote/{syms_str}?apikey={FMP_KEY}"
+        r   = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code != 200:
+            return result
+        data = r.json()
+        if not isinstance(data, list):
+            return result
+        for item in data:
+            sym = item.get("symbol","")
+            if sym:
+                result[sym] = {
+                    "price":   round(float(item.get("price", 0)), 2),
+                    "chg_pct": round(float(item.get("changesPercentage", 0)), 2),
+                }
+    except Exception:
+        pass
+    return result
+
+
+def fmp_index_quote(symbol_map: dict) -> dict:
+    """
+    Cotizaciones de índices via FMP.
+    symbol_map: {display_name: fmp_symbol}
+    e.g. {"S&P 500": "^GSPC", "NASDAQ": "^IXIC"}
+    """
+    result = {}
+    try:
+        syms = list(symbol_map.values())
+        data = fmp_quote(syms)
+        for name, sym in symbol_map.items():
+            if sym in data:
+                result[name] = data[sym]
+    except Exception:
+        pass
+    return result
+
+
+def av_quote_single(symbol: str) -> dict:
+    """Alpha Vantage — cotización individual."""
+    cached = get_cache(f"av_{symbol}", ttl=600)
+    if cached:
+        return cached
+    try:
+        url = (f"https://www.alphavantage.co/query"
+               f"?function=GLOBAL_QUOTE&symbol={symbol}&apikey={AV_KEY}")
+        r = requests.get(url, timeout=10)
+        d = r.json().get("Global Quote", {})
+        if not d or "05. price" not in d:
+            return {}
+        val = {
+            "price":   round(float(d["05. price"]), 2),
+            "chg_pct": round(float(d["10. change percent"].replace("%","")), 2),
+        }
+        return set_cache(f"av_{symbol}", val)
+    except Exception:
+        return {}
+
+
+def av_daily(symbol: str) -> list:
+    """Alpha Vantage — historial diario (~5 meses compact)."""
+    cached = get_cache(f"avd_{symbol}", ttl=3600)
+    if cached:
+        return cached
+    try:
+        url = (f"https://www.alphavantage.co/query"
+               f"?function=TIME_SERIES_DAILY&symbol={symbol}"
+               f"&outputsize=compact&apikey={AV_KEY}")
+        r    = requests.get(url, timeout=15)
+        data = r.json().get("Time Series (Daily)", {})
+        if not data:
+            return []
+        hist = [{"date": d, "close": round(float(v["4. close"]), 2)}
+                for d, v in sorted(data.items())]
+        return set_cache(f"avd_{symbol}", hist[-130:])
+    except Exception:
+        return []
+
+
+def dolarapi() -> dict:
+    """Cotizaciones del dólar en Argentina."""
+    cached = get_cache("dolar", ttl=300)
+    if cached:
+        return cached
+    try:
+        r    = requests.get("https://dolarapi.com/v1/dolares", timeout=8)
+        data = r.json()
+        tipos = {"oficial":"Oficial","blue":"Blue","contadoconliqui":"CCL","bolsa":"MEP"}
+        result = {}
+        for item in data:
+            if item["casa"] in tipos:
+                result[tipos[item["casa"]]] = {
+                    "compra": item.get("compra", 0),
+                    "venta":  item.get("venta", 0),
+                }
+        return set_cache("dolar", result)
+    except Exception:
+        return {}
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -38,25 +161,16 @@ scanner_state = {
 
 def run_scanner_thread(session: str, params: dict = None, active_setups: list = None):
     global scanner_state
-    scanner_state["running"]        = True
-    scanner_state["session"]        = session
-    scanner_state["progress"]       = 0
-    scanner_state["results"]        = []
-    scanner_state["log"]            = []
-    scanner_state["current_ticker"] = ""
-
+    scanner_state.update({"running":True,"session":session,"progress":0,
+                          "results":[],"log":[],"current_ticker":""})
     try:
-        import importlib
-        import scanner as sc
+        import importlib, scanner as sc
         importlib.reload(sc)
         from config import CEDEARS, TOP_N, MIN_PROBABILITY
-
         mp = float(params.get("mp", MIN_PROBABILITY)) if params else MIN_PROBABILITY
         tn = int(params.get("tn", TOP_N))             if params else TOP_N
-
         scanner_state["total"] = len(CEDEARS)
         resultados = []
-
         for i, ticker in enumerate(CEDEARS, 1):
             scanner_state["progress"]       = i
             scanner_state["current_ticker"] = ticker
@@ -64,30 +178,22 @@ def run_scanner_thread(session: str, params: dict = None, active_setups: list = 
                 res = sc.analizar_ticker(ticker, active_setups=active_setups)
                 if res and res["probabilidad"] >= mp:
                     resultados.append(res)
-                    scanner_state["log"].append(
-                        f"✅ {ticker.replace('.BA','')} — {res['setup']} | {res['probabilidad']}%"
-                    )
+                    scanner_state["log"].append(f"✅ {ticker.replace('.BA','')} — {res['setup']} | {res['probabilidad']}%")
                 else:
                     scanner_state["log"].append(f"⬜ {ticker.replace('.BA','')} — sin setup")
             except Exception:
                 scanner_state["log"].append(f"⚠️ {ticker} — error")
-
-            import time
             time.sleep(0.3) if i % 10 != 0 else time.sleep(2)
-
-        resultados.sort(key=lambda x: (x["probabilidad"], x["confluencias"], x["vol_rel"]), reverse=True)
+        resultados.sort(key=lambda x:(x["probabilidad"],x["confluencias"],x["vol_rel"]),reverse=True)
         top = resultados[:tn]
         scanner_state["results"]  = top
         scanner_state["last_run"] = datetime.now().strftime("%d/%m/%Y %H:%M")
-
         if top:
             sc.guardar_excel(top, session)
-        msg = sc.build_telegram_message(top, session)
-        sc.send_telegram(msg)
-        scanner_state["log"].append(f"\n🏁 Completado. {len(top)} oportunidades encontradas.")
-
+        sc.send_telegram(sc.build_telegram_message(top, session))
+        scanner_state["log"].append(f"\n🏁 Completado. {len(top)} oportunidades.")
     except Exception as e:
-        scanner_state["log"].append(f"❌ Error crítico: {e}")
+        scanner_state["log"].append(f"❌ Error: {e}")
     finally:
         scanner_state["running"] = False
 
@@ -100,62 +206,20 @@ def get_historial():
     try:
         from openpyxl import load_workbook
         archivo = os.path.join(os.path.dirname(os.path.abspath(__file__)), "registros_scanner.xlsx")
-        if not os.path.exists(archivo):
-            return []
-        wb = load_workbook(archivo)
-        ws = wb.active
+        if not os.path.exists(archivo): return []
+        wb = load_workbook(archivo); ws = wb.active
         rows = []
         for row in ws.iter_rows(min_row=2, values_only=True):
             if row[0]:
                 rows.append({
-                    "fecha": row[0], "hora": row[1], "sesion": row[2],
-                    "ticker": row[3], "setup": row[4], "confluencias": row[5],
-                    "probabilidad": row[6], "precio": row[7],
-                    "target": row[8], "stop": row[9],
-                    "rsi": row[10], "vol_rel": row[11], "atr": row[12],
-                    "descripcion": row[13],
-                    "resultado": row[14] if len(row) > 14 else "Pendiente",
+                    "fecha":row[0],"hora":row[1],"sesion":row[2],"ticker":row[3],
+                    "setup":row[4],"confluencias":row[5],"probabilidad":row[6],
+                    "precio":row[7],"target":row[8],"stop":row[9],
+                    "rsi":row[10],"vol_rel":row[11],"atr":row[12],
+                    "descripcion":row[13],
+                    "resultado":row[14] if len(row)>14 else "Pendiente",
                 })
         return list(reversed(rows))
-    except Exception:
-        return []
-
-
-# ═══════════════════════════════════════════════════════════════
-#  ALPHA VANTAGE — COTIZACIONES
-# ═══════════════════════════════════════════════════════════════
-
-def av_quote(symbol: str) -> dict:
-    """Obtiene precio actual y variación via Alpha Vantage."""
-    try:
-        url = (f"https://www.alphavantage.co/query"
-               f"?function=GLOBAL_QUOTE&symbol={symbol}&apikey={AV_KEY}")
-        r = requests.get(url, timeout=10)
-        d = r.json().get("Global Quote", {})
-        if not d or "05. price" not in d:
-            return {}
-        price   = float(d["05. price"])
-        chg_pct = float(d["10. change percent"].replace("%",""))
-        return {"price": round(price, 2), "chg_pct": round(chg_pct, 2)}
-    except Exception:
-        return {}
-
-
-def av_daily(symbol: str, months: int = 6) -> list:
-    """Obtiene historial diario via Alpha Vantage (últimos N meses)."""
-    try:
-        url = (f"https://www.alphavantage.co/query"
-               f"?function=TIME_SERIES_DAILY&symbol={symbol}"
-               f"&outputsize=compact&apikey={AV_KEY}")
-        r    = requests.get(url, timeout=15)
-        data = r.json().get("Time Series (Daily)", {})
-        if not data:
-            return []
-        items = sorted(data.items())  # oldest first
-        # compact = 100 días (~5 meses), suficiente
-        hist = [{"date": d, "close": round(float(v["4. close"]), 2)}
-                for d, v in items]
-        return hist[-130:]  # ~6 meses
     except Exception:
         return []
 
@@ -172,30 +236,22 @@ def index():
 @app.route("/run/<session>", methods=["POST"])
 def run(session):
     session = session.upper()
-    if session not in ["PRE-MARKET", "APERTURA", "CIERRE", "MANUAL"]:
-        return jsonify({"error": "Sesión inválida"}), 400
+    if session not in ["PRE-MARKET","APERTURA","CIERRE","MANUAL"]:
+        return jsonify({"error":"Sesión inválida"}),400
     if scanner_state["running"]:
-        return jsonify({"error": "El scanner ya está corriendo"}), 400
-    body          = request.get_json(silent=True) or {}
-    params        = body.get("params", {})
-    active_setups = body.get("active_setups", None)
-    t = threading.Thread(target=run_scanner_thread, args=(session, params, active_setups), daemon=True)
+        return jsonify({"error":"El scanner ya está corriendo"}),400
+    body = request.get_json(silent=True) or {}
+    t = threading.Thread(target=run_scanner_thread,
+        args=(session, body.get("params",{}), body.get("active_setups",None)), daemon=True)
     t.start()
-    return jsonify({"ok": True, "session": session})
+    return jsonify({"ok":True,"session":session})
 
 
 @app.route("/status")
 def status():
-    return jsonify({
-        "running":        scanner_state["running"],
-        "session":        scanner_state["session"],
-        "progress":       scanner_state["progress"],
-        "total":          scanner_state["total"],
-        "current_ticker": scanner_state["current_ticker"],
-        "results":        scanner_state["results"],
-        "log":            scanner_state["log"][-30:],
-        "last_run":       scanner_state["last_run"],
-    })
+    return jsonify({k: scanner_state[k] for k in
+        ["running","session","progress","total","current_ticker","results","last_run",
+         "log"]})
 
 
 @app.route("/historial")
@@ -203,198 +259,162 @@ def historial():
     return jsonify(get_historial())
 
 
-@app.route("/yahoo")
-def yahoo_quotes():
+@app.route("/market")
+def market():
     """
-    Cotizaciones usando Alpha Vantage.
-    El frontend sigue llamando /yahoo para no cambiar el JS.
-    Nota: AV free = 25 req/día → cacheamos en memoria por 10 min.
+    Endpoint unificado de datos de mercado.
+    Retorna: indices, commodities, crypto, movers, dolar
+    Usa FMP (indices/acciones) + dolarapi (dolar)
     """
-    symbols = [s.strip() for s in request.args.get("symbols","").split(",") if s.strip()]
-    result  = {}
+    cached = get_cache("market", ttl=300)
+    if cached:
+        return jsonify(cached)
 
-    # Cache simple en memoria
-    now = datetime.now()
-    if not hasattr(app, '_quote_cache'):
-        app._quote_cache = {}
+    # ── Índices via FMP ──────────────────────────────────────
+    idx_syms = ["^GSPC","^IXIC","^DJI","^RUT","^VIX","MERVAL"]
+    idx_data = fmp_quote(idx_syms)
 
-    for sym in symbols:
-        # Verificar cache (válido por 10 minutos)
-        cached = app._quote_cache.get(sym)
-        if cached and (now - cached["ts"]).seconds < 600:
-            result[sym] = cached["data"]
-            continue
+    indices = [
+        {"n":"S&P 500",      "s":"^GSPC",  "d": idx_data.get("^GSPC",{})},
+        {"n":"NASDAQ",       "s":"^IXIC",  "d": idx_data.get("^IXIC",{})},
+        {"n":"Dow Jones",    "s":"^DJI",   "d": idx_data.get("^DJI",{})},
+        {"n":"Russell 2000", "s":"^RUT",   "d": idx_data.get("^RUT",{})},
+        {"n":"VIX",          "s":"^VIX",   "d": idx_data.get("^VIX",{})},
+        {"n":"Merval",       "s":"MERVAL", "d": idx_data.get("MERVAL",{})},
+    ]
 
-        # Para índices y futuros que AV no soporta, usar yfinance
-        if sym.startswith("^") or sym.endswith("=F") or "-" in sym:
-            try:
-                import yfinance as yf
-                t    = yf.Ticker(sym)
-                hist = t.history(period="5d", interval="1d", auto_adjust=True)
-                if not hist.empty:
-                    closes = hist["Close"].dropna()
-                    if len(closes) >= 2:
-                        last = float(closes.iloc[-1])
-                        prev = float(closes.iloc[-2])
-                        d = {"price": round(last,2), "chg_pct": round((last-prev)/prev*100,2)}
-                        result[sym] = d
-                        app._quote_cache[sym] = {"data": d, "ts": now}
-            except Exception:
-                pass
-            continue
+    # ── Commodities via FMP ──────────────────────────────────
+    com_syms  = ["GCUSD","CLUSD","SIUSD","HGUSD"]
+    com_data  = fmp_quote(com_syms)
+    commodities = [
+        {"n":"Oro",          "d": com_data.get("GCUSD",{})},
+        {"n":"Petróleo WTI", "d": com_data.get("CLUSD",{})},
+        {"n":"Plata",        "d": com_data.get("SIUSD",{})},
+        {"n":"Cobre",        "d": com_data.get("HGUSD",{})},
+    ]
 
-        # Alpha Vantage para acciones normales
-        d = av_quote(sym)
-        if d:
-            result[sym] = d
-            app._quote_cache[sym] = {"data": d, "ts": now}
+    # ── Crypto via FMP ───────────────────────────────────────
+    cry_syms = ["BTCUSD","ETHUSD"]
+    cry_data = fmp_quote(cry_syms)
+    crypto = [
+        {"n":"Bitcoin (BTC)",  "d": cry_data.get("BTCUSD",{})},
+        {"n":"Ethereum (ETH)", "d": cry_data.get("ETHUSD",{})},
+    ]
 
-        import time
-        time.sleep(0.5)  # respetar rate limit AV
+    # ── Movers via FMP ───────────────────────────────────────
+    wl_syms = ["AAPL","MSFT","GOOGL","AMZN","NVDA","META","TSLA",
+               "JPM","BAC","V","MA","XOM","CVX","JNJ","UNH",
+               "GGAL","YPF","MELI","NU","BABA"]
+    wl_data = fmp_quote(wl_syms)
+    movers  = [{"s":s,"price":wl_data[s]["price"],"chg_pct":wl_data[s]["chg_pct"]}
+               for s in wl_syms if s in wl_data and wl_data[s].get("chg_pct") is not None]
+    movers.sort(key=lambda x: x["chg_pct"], reverse=True)
 
+    # ── Dólar ────────────────────────────────────────────────
+    dolar = dolarapi()
+
+    result = {
+        "indices":     indices,
+        "commodities": commodities,
+        "crypto":      crypto,
+        "gainers":     movers[:5],
+        "losers":      movers[-5:][::-1],
+        "dolar":       dolar,
+    }
+    set_cache("market", result)
     return jsonify(result)
 
 
 @app.route("/sector_data")
 def sector_data():
-    """Historial de 6 meses via Alpha Vantage."""
+    """Historial 6 meses via Alpha Vantage."""
     tickers = [t.strip() for t in request.args.get("tickers","").split(",") if t.strip()]
     result  = {}
-
-    # Cache por 30 minutos (los gráficos no necesitan actualizarse seguido)
-    now = datetime.now()
-    if not hasattr(app, '_sector_cache'):
-        app._sector_cache = {}
-
     for sym in tickers:
-        cached = app._sector_cache.get(sym)
-        if cached and (now - cached["ts"]).seconds < 1800:
-            result[sym] = cached["data"]
+        cached = get_cache(f"sec_{sym}", ttl=3600)
+        if cached:
+            result[sym] = cached
             continue
-
         hist = av_daily(sym)
         if len(hist) < 5:
-            # Fallback yfinance
-            try:
-                import yfinance as yf
-                import pandas as pd
-                t  = yf.Ticker(sym)
-                df = t.history(period="6mo", interval="1d", auto_adjust=True)
-                if not df.empty:
-                    df.columns = [c.lower() for c in df.columns]
-                    hist = [{"date": str(idx.date()), "close": round(float(row["close"]),2)}
-                            for idx, row in df.iterrows()]
-            except Exception:
-                pass
-
-        if len(hist) < 5:
             continue
+        last = hist[-1]["close"]
+        prev = hist[-2]["close"] if len(hist)>=2 else last
+        d = {"price":last,"chg_pct":round((last-prev)/prev*100,2),"history":hist}
+        result[sym] = set_cache(f"sec_{sym}", d)
+        time.sleep(0.3)
+    return jsonify(result)
 
-        last  = hist[-1]["close"]
-        prev  = hist[-2]["close"] if len(hist) >= 2 else last
-        d = {
-            "price":   last,
-            "chg_pct": round((last - prev) / prev * 100, 2),
-            "history": hist,
-        }
-        result[sym] = d
-        app._sector_cache[sym] = {"data": d, "ts": now}
 
-        import time
-        time.sleep(0.5)
-
+@app.route("/watchlist_data")
+def watchlist_data():
+    """RSI, MACD via Alpha Vantage."""
+    tickers = [t.strip() for t in request.args.get("tickers","").split(",") if t.strip()]
+    if not tickers: return jsonify({})
+    result = {}
+    import pandas as pd
+    for sym in tickers:
+        try:
+            hist = av_daily(sym)
+            if len(hist) < 26: continue
+            closes = pd.Series([h["close"] for h in hist])
+            last    = float(closes.iloc[-1])
+            prev    = float(closes.iloc[-2])
+            chg_pct = round((last-prev)/prev*100,2)
+            delta = closes.diff()
+            gain  = delta.clip(lower=0).rolling(14).mean()
+            loss  = (-delta.clip(upper=0)).rolling(14).mean()
+            rs    = gain/loss.replace(0,float("nan"))
+            rsi   = round(float(100-(100/(1+rs.iloc[-1]))),1)
+            ema12 = closes.ewm(span=12,adjust=False).mean()
+            ema26 = closes.ewm(span=26,adjust=False).mean()
+            macd  = ema12-ema26
+            sig   = macd.ewm(span=9,adjust=False).mean()
+            mv,sv = round(float(macd.iloc[-1]),3),round(float(sig.iloc[-1]),3)
+            result[sym] = {
+                "price":last,"chg_pct":chg_pct,"rsi":rsi,
+                "macd":mv,"macd_signal":sv,"macd_hist":round(mv-sv,3),
+                "macd_str":"COMPRA" if mv>sv else "VENTA" if mv<sv else "NEUTRO",
+                "atr":None,
+                "sparkline":[round(float(v),2) for v in closes.iloc[-20:].tolist()],
+            }
+        except Exception:
+            pass
+        time.sleep(0.3)
     return jsonify(result)
 
 
 @app.route("/news")
 def news():
-    """Noticias financieras en español via RSS."""
+    """Noticias en español via RSS."""
     import xml.etree.ElementTree as ET
+    cached = get_cache("news", ttl=300)
+    if cached: return jsonify(cached)
     feeds = [
         ("El Cronista",  "https://www.cronista.com/files/rss/mercados.xml"),
         ("Ámbito",       "https://www.ambito.com/rss/pages/economia.html"),
         ("Infobae",      "https://www.infobae.com/feeds/rss/economia/"),
         ("iProfesional", "https://www.iprofesional.com/rss/home.xml"),
-        ("Reuters ES",   "https://feeds.reuters.com/reuters/MXeconomicsNews"),
     ]
     items = []
     for source, url in feeds:
         try:
-            r = requests.get(url, timeout=6, headers={"User-Agent": "Mozilla/5.0"})
+            r    = requests.get(url, timeout=6, headers={"User-Agent":"Mozilla/5.0"})
             root = ET.fromstring(r.content)
             for item in root.iter("item"):
                 title = item.findtext("title","").strip()
                 link  = item.findtext("link","").strip()
                 pub   = item.findtext("pubDate","").strip()
-                if title and len(title) > 15:
-                    items.append({"source": source, "title": title, "url": link, "time": pub[:16] if pub else ""})
-                if len(items) >= 8:
-                    break
+                if title and len(title)>15:
+                    items.append({"source":source,"title":title,"url":link,"time":pub[:16] if pub else ""})
+                if len(items)>=8: break
         except Exception:
             pass
-        if len(items) >= 8:
-            break
-
+        if len(items)>=8: break
     if not items:
-        items = [{"source": "Info", "title": "No se pudieron cargar las noticias.", "url": "#", "time": ""}]
-
-    return jsonify(items[:5])
-
-
-@app.route("/watchlist_data")
-def watchlist_data():
-    """RSI, MACD, ATR via Alpha Vantage + cálculo local."""
-    tickers = [t.strip() for t in request.args.get("tickers","").split(",") if t.strip()]
-    if not tickers:
-        return jsonify({})
-    result = {}
-    import time
-
-    for sym in tickers:
-        try:
-            hist = av_daily(sym, months=3)
-            if len(hist) < 26:
-                continue
-
-            import pandas as pd
-            import numpy as np
-            closes = pd.Series([h["close"] for h in hist])
-
-            last    = float(closes.iloc[-1])
-            prev    = float(closes.iloc[-2])
-            chg_pct = round((last - prev) / prev * 100, 2)
-
-            # RSI 14
-            delta = closes.diff()
-            gain  = delta.clip(lower=0).rolling(14).mean()
-            loss  = (-delta.clip(upper=0)).rolling(14).mean()
-            rs    = gain / loss.replace(0, float("nan"))
-            rsi   = round(float(100 - (100 / (1 + rs.iloc[-1]))), 1)
-
-            # MACD
-            ema12   = closes.ewm(span=12, adjust=False).mean()
-            ema26   = closes.ewm(span=26, adjust=False).mean()
-            macd    = ema12 - ema26
-            signal  = macd.ewm(span=9, adjust=False).mean()
-            mv      = round(float(macd.iloc[-1]), 3)
-            sv      = round(float(signal.iloc[-1]), 3)
-            macd_str = "COMPRA" if mv > sv else "VENTA" if mv < sv else "NEUTRO"
-
-            result[sym] = {
-                "price":    round(last, 2),
-                "chg_pct":  chg_pct,
-                "rsi":      rsi,
-                "macd":     mv,
-                "macd_signal": sv,
-                "macd_hist":   round(mv - sv, 3),
-                "macd_str":    macd_str,
-                "atr":      None,
-                "sparkline": [round(float(v),2) for v in closes.iloc[-20:].tolist()],
-            }
-        except Exception:
-            pass
-        time.sleep(0.5)
-
+        items=[{"source":"Info","title":"No se pudieron cargar las noticias.","url":"#","time":""}]
+    result = items[:5]
+    set_cache("news", result)
     return jsonify(result)
 
 
