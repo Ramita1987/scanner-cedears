@@ -1,22 +1,20 @@
-name: Scanner CEDEARs Automático
+name: Scanner CEDEARs Automatico
 
 on:
   schedule:
-    # Horarios en UTC — Argentina es UTC-3
+    # UTC (Argentina UTC-3)
     # 10:00 ARG = 13:00 UTC
-    - cron: '0 11 * * 1-5'
+    - cron: "0 13 * * 1-5"
     # 11:15 ARG = 14:15 UTC
-    - cron: '15 11 * * 1-5'
+    - cron: "15 14 * * 1-5"
     # 16:45 ARG = 19:45 UTC
-    - cron: '45 16 * * 1-5'
-
-  # También permite correrlo manualmente desde GitHub
+    - cron: "45 19 * * 1-5"
   workflow_dispatch:
     inputs:
       session:
-        description: 'Sesión del scanner'
+        description: "Sesion del scanner"
         required: true
-        default: 'MANUAL'
+        default: "MANUAL"
         type: choice
         options:
           - MANUAL
@@ -27,25 +25,23 @@ on:
 jobs:
   run-scanner:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout código
+      - name: Checkout codigo
         uses: actions/checkout@v4
 
       - name: Configurar Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-          cache: 'pip'
+          python-version: "3.11"
+          cache: "pip"
 
       - name: Instalar dependencias
         run: pip install yfinance pandas numpy requests openpyxl
 
-      - name: Determinar sesión
+      - name: Determinar sesion
         id: session
         run: |
           HOUR=$(date -u +%H)
-          MIN=$(date -u +%M)
           INPUT="${{ github.event.inputs.session }}"
 
           if [ -n "$INPUT" ]; then
