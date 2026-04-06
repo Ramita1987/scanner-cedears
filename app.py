@@ -647,9 +647,6 @@ def sector_daily_resilient(symbol: str, timeseries: int = 130) -> tuple:
     if sec_proxy and sec_proxy not in candidates:
         candidates.append(sec_proxy)
 
-    if "SPY" not in candidates:
-        candidates.append("SPY")
-
     for cand in candidates:
         hist = fmp_daily(cand, timeseries=timeseries)
         if len(hist) >= 5:
