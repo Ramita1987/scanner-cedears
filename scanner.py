@@ -680,32 +680,40 @@ def _send_google_sheets_rows(rows: list) -> dict:
         log.warning(msg)
         return {"ok": False, "reason": msg}
     try:
-        r = requests.post(GOOGLE_SHEETS_WEBHOOK_URL, json={"rows": rows}, timeout=15)
-        if not (200 <= r.status_code < 300):
-            log.warning(f"Google Sheets webhook {r.status_code}: {r.text[:180]}")
-            return {"ok": False, "reason": f"HTTP {r.status_code}: {r.text[:120]}"}
+        total_inserted = 0
+        # Enviamos en lotes para evitar timeout/size limit de Apps Script.
+        batch_size = 20
+        for i in range(0, len(rows), batch_size):
+            chunk = rows[i:i + batch_size]
+            r = requests.post(
+                GOOGLE_SHEETS_WEBHOOK_URL,
+                json={"rows": chunk},
+                timeout=30,
+            )
+            if not (200 <= r.status_code < 300):
+                log.warning(f"Google Sheets webhook {r.status_code}: {r.text[:180]}")
+                return {"ok": False, "reason": f"HTTP {r.status_code}: {r.text[:120]}"}
 
-        # El Apps Script suele responder JSON como {"ok":true,"inserted":N}
-        # Validamos ese cuerpo para evitar falsos positivos.
-        body_text = (r.text or "").strip()
-        body = {}
-        try:
-            body = r.json() if body_text else {}
-        except Exception:
+            body_text = (r.text or "").strip()
             body = {}
+            try:
+                body = r.json() if body_text else {}
+            except Exception:
+                body = {}
 
-        if isinstance(body, dict) and body.get("ok") is False:
-            reason = body.get("error") or body.get("message") or body_text[:180]
-            log.warning(f"Google Sheets respondió ok=false: {reason}")
-            return {"ok": False, "reason": f"apps_script: {reason}"}
+            if isinstance(body, dict) and body.get("ok") is False:
+                reason = body.get("error") or body.get("message") or body_text[:180]
+                log.warning(f"Google Sheets respondió ok=false: {reason}")
+                return {"ok": False, "reason": f"apps_script: {reason}"}
 
-        inserted = body.get("inserted") if isinstance(body, dict) else None
-        if isinstance(inserted, int):
-            log.info(f"Google Sheets actualizado ({inserted} filas).")
-            return {"ok": True, "reason": f"{inserted} filas"}
+            inserted = body.get("inserted") if isinstance(body, dict) else None
+            if isinstance(inserted, int):
+                total_inserted += inserted
+            else:
+                total_inserted += len(chunk)
 
-        log.info(f"Google Sheets actualizado ({len(rows)} filas).")
-        return {"ok": True, "reason": f"{len(rows)} filas"}
+        log.info(f"Google Sheets actualizado ({total_inserted} filas).")
+        return {"ok": True, "reason": f"{total_inserted} filas"}
     except Exception as e:
         log.warning(f"No se pudo enviar a Google Sheets: {e}")
         return {"ok": False, "reason": str(e)}
