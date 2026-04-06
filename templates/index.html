@@ -785,6 +785,18 @@ function showSec(k,btn){
 async function loadSec2(k){
   const sec=SECS[k];if(!sec)return;
   document.getElementById('stitle').innerHTML=`${sec.l} <span>— últimos 6 meses</span>`;
+  let missEl=document.getElementById('smissing');
+  if(!missEl){
+    missEl=document.createElement('div');
+    missEl.id='smissing';
+    missEl.style.margin='-8px 0 10px';
+    missEl.style.color='var(--text3)';
+    missEl.style.fontSize='.72rem';
+    missEl.style.minHeight='16px';
+    const st=document.getElementById('stitle');
+    st.parentNode.insertBefore(missEl, st.nextSibling);
+  }
+  missEl.textContent='';
   document.getElementById('cload').style.display='flex';
   document.getElementById('schart').style.display='none';
   document.getElementById('sstocks').innerHTML='';
@@ -894,15 +906,18 @@ function drawChart(data,tickers){
 function renderStocks(data,tickers){
   const available=tickers.filter(t=>(data[t]?.history||[]).length>=2);
   const missing=tickers.filter(t=>!available.includes(t));
+  const missEl=document.getElementById('smissing');
   let html=available.map(t=>{
     const d=data[t]||{};const cls=d.chg_pct>0?'up':d.chg_pct<0?'down':'flat';
     return`<div class="sstock"><div class="ss-t">${t}</div><div class="ss-p">$${fp(d.price)}</div><div class="ss-c ${cls}">${cs(d.chg_pct)}</div></div>`;
   }).join('');
   if(!html){
     html='<div class="watch-empty">Sin datos para este sector con las fuentes actuales.</div>';
-  }
-  if(missing.length){
-    html+=`<div class="watch-empty">Sin datos: ${missing.join(', ')}</div>`;
+    if(missEl&&missing.length){
+      missEl.textContent=`Tickers sin cobertura: ${missing.join(', ')}`;
+    }
+  }else if(missEl){
+    missEl.textContent=missing.length?`Tickers sin cobertura: ${missing.join(', ')}`:'';
   }
   document.getElementById('sstocks').innerHTML=html;
 }
