@@ -10,8 +10,8 @@
 # El CHAT_ID lo obtenés enviando un mensaje al bot y consultando:
 # https://api.telegram.org/bot<TU_TOKEN>/getUpdates
 
-TELEGRAM_TOKEN   = "TU_TOKEN_AQUI"         # Ej: "7123456789:AAFxxx..."
-TELEGRAM_CHAT_ID = "TU_CHAT_ID_AQUI"       # Ej: "123456789"
+TELEGRAM_TOKEN   = "8782386140:AAGie0EfONP9qm6XvAQ2mYBFfSmH_9Qhn2A"         # Ej: "7123456789:AAFxxx..."
+TELEGRAM_CHAT_ID = "-1003742537108"       # Ej: "123456789"
 
 
 # ── PARÁMETROS DEL SCANNER ─────────────────────────────────────
