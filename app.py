@@ -35,6 +35,29 @@ SECTOR_MAP = {
     "nuc": ["CEG", "NXE", "URA", "CCJ"],
 }
 
+SYMBOL_ALIASES = {
+    "YPF": ["YPF.BA", "YPFD", "YPFD.BA"],
+    "BAC": ["BAC.BA"],
+    "MS": ["MS.BA"],
+    "BRK-B": ["BRK.B", "BRK-B.BA"],
+}
+
+
+def symbol_candidates(symbol: str) -> list:
+    s = (symbol or "").strip().upper()
+    if not s:
+        return []
+    out = [s]
+    out.extend(SYMBOL_ALIASES.get(s, []))
+    if "." not in s and "-" not in s and len(s) <= 5:
+        out.append(f"{s}.BA")
+    uniq = []
+    for x in out:
+        xx = (x or "").strip().upper()
+        if xx and xx not in uniq:
+            uniq.append(xx)
+    return uniq
+
 # ── API Keys ─────────────────────────────────────────────────────
 AV_KEY  = os.environ.get("AV_KEY",  "6IFZV2E8RQ6BMJ0L")   # Alpha Vantage
 FMP_KEY = os.environ.get("FMP_KEY", "aiQvIiYs0bc5eOheSFHH2c4kmi4lRVhr")                 # Financial Modeling Prep (free)
@@ -546,9 +569,19 @@ def run_scanner_thread(session: str, params: dict = None, active_setups: list = 
         top = resultados[:tn]
         scanner_state["results"]  = top
         scanner_state["last_run"] = datetime.now().strftime("%d/%m/%Y %H:%M")
+        excel_status = {"excel_ok": False, "excel_reason": "sin señales", "sheets_ok": False, "sheets_reason": "sin señales"}
         if top:
-            sc.guardar_excel(top, session)
-        sc.send_telegram(sc.build_telegram_message(top, session))
+            excel_status = sc.guardar_excel(top, session)
+        tg_status = sc.send_telegram_status(sc.build_telegram_message(top, session))
+        scanner_state["log"].append(
+            f"📣 Telegram: {'OK' if tg_status.get('ok') else 'ERROR'} — {tg_status.get('reason','')}"
+        )
+        scanner_state["log"].append(
+            f"🗂️ Excel: {'OK' if excel_status.get('excel_ok') else 'ERROR'} — {excel_status.get('excel_reason','')}"
+        )
+        scanner_state["log"].append(
+            f"🟩 Sheets: {'OK' if excel_status.get('sheets_ok') else 'ERROR'} — {excel_status.get('sheets_reason','')}"
+        )
         scanner_state["log"].append(f"\n🏁 Completado. {len(top)} oportunidades.")
     except Exception as e:
         scanner_state["log"].append(f"❌ Error: {e}")
@@ -1243,6 +1276,26 @@ def scanner_health():
             row["error"] = str(e)
         out["tickers"].append(row)
     return jsonify(out)
+
+
+@app.route("/scanner_integrations")
+def scanner_integrations():
+    """Estado de configuración de integraciones (sin exponer secretos)."""
+    try:
+        import scanner as sc
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+    tg_token = bool(getattr(sc, "TELEGRAM_TOKEN_RESOLVED", ""))
+    tg_chat = bool(getattr(sc, "TELEGRAM_CHAT_ID_RESOLVED", ""))
+    gs_url = (getattr(sc, "GOOGLE_SHEETS_WEBHOOK_URL", "") or "").strip()
+    return jsonify({
+        "ok": True,
+        "telegram_token_set": tg_token,
+        "telegram_chat_set": tg_chat,
+        "telegram_configured": tg_token and tg_chat,
+        "sheets_url_set": bool(gs_url),
+        "sheets_url_looks_valid": ("script.google.com/macros/" in gs_url),
+    })
 
 
 @app.route("/clear_cache")
