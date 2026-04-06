@@ -443,13 +443,16 @@ def fmp_daily(symbol: str, timeseries: int = 130) -> list:
     cached = get_cache(f"fmpd_{symbol}", ttl=3600)
     if cached:
         return cached
+    d912_hist = data912_daily(symbol, timeseries=timeseries)
+    if len(d912_hist) >= 5:
+        return d912_hist
     try:
         enc = quote(symbol, safe="")
         url = (
             f"https://financialmodelingprep.com/stable/historical-price-eod/full"
             f"?symbol={enc}&apikey={FMP_KEY}"
         )
-        r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+        r = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
         if r.status_code == 200:
             payload = r.json()
             if isinstance(payload, list):
@@ -468,9 +471,6 @@ def fmp_daily(symbol: str, timeseries: int = 130) -> list:
                 return set_cache(f"fmpd_{symbol}", hist[-timeseries:])
     except Exception:
         pass
-    d912_hist = data912_daily(symbol, timeseries=timeseries)
-    if len(d912_hist) >= 5:
-        return d912_hist
     av_hist = av_daily(symbol)
     if len(av_hist) >= 5:
         return av_hist
@@ -638,21 +638,47 @@ def build_market_payload() -> dict:
         yf_pool.extend(row["yf"])
     yf_pool.extend(wl_syms)
 
-    market_fmp = fmp_quote_safe(fmp_pool)
-    market_yf = yf_quote_bulk(yf_pool)
     market_d912 = data912_quote_map(yf_pool)
-    movers_fmp = fmp_quote_safe(wl_syms)
+    market_fmp = {}
+    market_yf = {}
+    movers_fmp = {}
+
+    def need_more_core_data() -> bool:
+        for row in idx_defs + com_defs + cry_defs:
+            q, _ = _pick_quote(market_d912, row["av"])
+            if not q:
+                return True
+        return False
+
+    need_core = need_more_core_data()
+    need_movers = any((s not in market_d912 or market_d912[s].get("price") is None) for s in wl_syms)
+
+    if need_core or need_movers:
+        market_fmp = fmp_quote_safe(fmp_pool if need_core else wl_syms)
+        movers_fmp = market_fmp if not need_core else fmp_quote_safe(wl_syms)
+
+    if need_core:
+        missing_after_d912_fmp = []
+        for row in idx_defs + com_defs + cry_defs:
+            q, _ = _pick_quote(market_d912, row["av"])
+            if q:
+                continue
+            q, _ = _pick_quote(market_fmp, row["fmp"])
+            if not q:
+                missing_after_d912_fmp.extend(row["yf"])
+        if missing_after_d912_fmp:
+            market_yf = yf_quote_bulk(missing_after_d912_fmp)
 
     def pick_market(row):
+        q, src = _pick_quote(market_d912, row["av"])
+        if q:
+            return q, f"D912:{src}"
         q, src = _pick_quote(market_fmp, row["fmp"])
         if q:
             return q, f"FMP:{src}"
         q, src = _pick_quote(market_yf, row["yf"])
         if q:
             return q, f"YF:{src}"
-        q, src = _pick_quote(market_d912, row["av"])
-        if q:
-            return q, f"D912:{src}"
         q, src = av_quote_first(row["av"])
         if q:
             return q, f"AV:{src}"
@@ -675,14 +701,14 @@ def build_market_payload() -> dict:
 
     movers_data = {}
     for sym in wl_syms:
+        if sym in market_d912 and market_d912[sym].get("price") is not None:
+            movers_data[sym] = market_d912[sym]
+            continue
         if sym in movers_fmp and movers_fmp[sym].get("price") is not None:
             movers_data[sym] = movers_fmp[sym]
             continue
         if sym in market_yf and market_yf[sym].get("price") is not None:
             movers_data[sym] = market_yf[sym]
-            continue
-        if sym in market_d912 and market_d912[sym].get("price") is not None:
-            movers_data[sym] = market_d912[sym]
             continue
         q, _ = av_quote_first([sym])
         if q:
@@ -938,7 +964,6 @@ def sector_data():
         prev = hist[-2]["close"] if len(hist)>=2 else last
         d = {"price":last,"chg_pct":round((last-prev)/prev*100,2),"history":hist}
         result[sym] = set_cache(f"sec_{sym}", d)
-        time.sleep(0.3)
     return jsonify(result)
 
 
@@ -1024,6 +1049,32 @@ def news():
     result = items[:5]
     set_cache("news", result)
     return jsonify(result)
+
+
+@app.route("/health_data")
+def health_data():
+    """Estado rápido de proveedores de datos para diagnóstico."""
+    out = {"ok": True}
+
+    t0 = time.time()
+    d912_rows = data912_live_usa()
+    out["data912"] = {"rows": len(d912_rows), "ms": int((time.time() - t0) * 1000)}
+
+    t1 = time.time()
+    fmp = fmp_quote_safe(["SPY", "AAPL"])
+    out["fmp"] = {"rows": len(fmp), "ms": int((time.time() - t1) * 1000)}
+
+    t2 = time.time()
+    yf_map = yf_quote_bulk(["SPY", "AAPL"])
+    out["yahoo"] = {"rows": len(yf_map), "ms": int((time.time() - t2) * 1000)}
+
+    t3 = time.time()
+    av = av_quote_single("SPY")
+    out["alpha_vantage"] = {"ok": bool(av), "ms": int((time.time() - t3) * 1000)}
+
+    out["snapshot_exists"] = os.path.exists(MARKET_SNAPSHOT_PATH)
+    out["market_cached"] = bool(get_cache("market", ttl=3600))
+    return jsonify(out)
 
 
 @app.route("/clear_cache")
