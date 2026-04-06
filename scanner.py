@@ -23,6 +23,12 @@ from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, TOP_N, MIN_PROBABILITY, CED
 
 FMP_KEY = os.environ.get("FMP_KEY", "")
 GOOGLE_SHEETS_WEBHOOK_URL = os.environ.get("GOOGLE_SHEETS_WEBHOOK_URL", "").strip()
+REGISTROS_PATH = os.environ.get(
+    "REGISTROS_PATH",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "registros_scanner.xlsx"),
+).strip()
+TELEGRAM_TOKEN_FROM_ENV = os.environ.get("TELEGRAM_TOKEN", "").strip()
+TELEGRAM_CHAT_ID_FROM_ENV = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 TELEGRAM_TOKEN_RESOLVED = os.environ.get("TELEGRAM_TOKEN", TELEGRAM_TOKEN).strip()
 TELEGRAM_CHAT_ID_RESOLVED = os.environ.get("TELEGRAM_CHAT_ID", TELEGRAM_CHAT_ID).strip()
 
@@ -36,6 +42,8 @@ logging.basicConfig(
     ],
 )
 log = logging.getLogger(__name__)
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -123,6 +131,21 @@ def _normalize_ohlc(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def fetch_data_resilient(ticker: str) -> tuple:
+    # Fast-path: evitar Yahoo cuando Data912/FMP ya alcanzan.
+    try:
+        df_d912 = _data912_daily_ohlc(ticker)
+        if df_d912 is not None and len(df_d912) >= 30:
+            df_d = _normalize_ohlc(df_d912)
+            return df_d, df_d.copy()
+    except Exception:
+        pass
+    try:
+        df_fmp = _fmp_daily_ohlc(ticker)
+        if df_fmp is not None and len(df_fmp) >= 30:
+            df_d = _normalize_ohlc(df_fmp)
+            return df_d, df_d.copy()
+    except Exception:
+        pass
     """VersiÃ³n robusta: Yahoo + fallback FMP, y 1H opcional."""
     try:
         t = yf.Ticker(ticker)
@@ -676,7 +699,7 @@ def guardar_excel(oportunidades: list, session_name: str):
         from openpyxl import Workbook, load_workbook
         from openpyxl.styles import Font, PatternFill
 
-        archivo = os.path.join(os.path.dirname(os.path.abspath(__file__)), "registros_scanner.xlsx")
+        archivo = REGISTROS_PATH
         fecha   = datetime.now().strftime("%d/%m/%Y")
         hora    = datetime.now().strftime("%H:%M")
 
