@@ -800,7 +800,8 @@ def build_market_payload() -> dict:
     com_ok = sum(1 for i in result["commodities"] if i.get("d", {}).get("price") is not None)
     cry_ok = sum(1 for i in result["crypto"] if i.get("d", {}).get("price") is not None)
     mover_ok = len(result.get("gainers", [])) + len(result.get("losers", []))
-    enough_for_snapshot = idx_ok >= 3 and com_ok >= 2 and cry_ok >= 1 and mover_ok >= 6
+    # Umbral más flexible para no perder respaldo en días con proveedores incompletos.
+    enough_for_snapshot = (idx_ok >= 2 and mover_ok >= 6) or (com_ok >= 2 and cry_ok >= 1 and mover_ok >= 6)
 
     has_data = any(
         i.get("d", {}).get("price") is not None
