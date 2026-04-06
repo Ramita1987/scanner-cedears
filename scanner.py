@@ -27,10 +27,10 @@ REGISTROS_PATH = os.environ.get(
     "REGISTROS_PATH",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "registros_scanner.xlsx"),
 ).strip()
-TELEGRAM_TOKEN_FROM_ENV = os.environ.get("8782386140:AAGie0EfONP9qm6XvAQ2mYBFfSmH_9Qhn2A", "").strip()
-TELEGRAM_CHAT_ID_FROM_ENV = os.environ.get("-1003742537108", "").strip()
-TELEGRAM_TOKEN_RESOLVED = os.environ.get("8782386140:AAGie0EfONP9qm6XvAQ2mYBFfSmH_9Qhn2A", TELEGRAM_TOKEN).strip()
-TELEGRAM_CHAT_ID_RESOLVED = os.environ.get("-1003742537108", TELEGRAM_CHAT_ID).strip()
+TELEGRAM_TOKEN_FROM_ENV = os.environ.get("TELEGRAM_TOKEN", "").strip()
+TELEGRAM_CHAT_ID_FROM_ENV = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+TELEGRAM_TOKEN_RESOLVED = os.environ.get("TELEGRAM_TOKEN", TELEGRAM_TOKEN).strip()
+TELEGRAM_CHAT_ID_RESOLVED = os.environ.get("TELEGRAM_CHAT_ID", TELEGRAM_CHAT_ID).strip()
 
 # ── Logger ──────────────────────────────────────────────────────
 logging.basicConfig(
@@ -681,12 +681,31 @@ def _send_google_sheets_rows(rows: list) -> dict:
         return {"ok": False, "reason": msg}
     try:
         r = requests.post(GOOGLE_SHEETS_WEBHOOK_URL, json={"rows": rows}, timeout=15)
-        if 200 <= r.status_code < 300:
-            log.info(f"Google Sheets actualizado ({len(rows)} filas).")
-            return {"ok": True, "reason": f"{len(rows)} filas"}
-        else:
+        if not (200 <= r.status_code < 300):
             log.warning(f"Google Sheets webhook {r.status_code}: {r.text[:180]}")
             return {"ok": False, "reason": f"HTTP {r.status_code}: {r.text[:120]}"}
+
+        # El Apps Script suele responder JSON como {"ok":true,"inserted":N}
+        # Validamos ese cuerpo para evitar falsos positivos.
+        body_text = (r.text or "").strip()
+        body = {}
+        try:
+            body = r.json() if body_text else {}
+        except Exception:
+            body = {}
+
+        if isinstance(body, dict) and body.get("ok") is False:
+            reason = body.get("error") or body.get("message") or body_text[:180]
+            log.warning(f"Google Sheets respondió ok=false: {reason}")
+            return {"ok": False, "reason": f"apps_script: {reason}"}
+
+        inserted = body.get("inserted") if isinstance(body, dict) else None
+        if isinstance(inserted, int):
+            log.info(f"Google Sheets actualizado ({inserted} filas).")
+            return {"ok": True, "reason": f"{inserted} filas"}
+
+        log.info(f"Google Sheets actualizado ({len(rows)} filas).")
+        return {"ok": True, "reason": f"{len(rows)} filas"}
     except Exception as e:
         log.warning(f"No se pudo enviar a Google Sheets: {e}")
         return {"ok": False, "reason": str(e)}
