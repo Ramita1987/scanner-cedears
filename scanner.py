@@ -27,10 +27,10 @@ REGISTROS_PATH = os.environ.get(
     "REGISTROS_PATH",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "registros_scanner.xlsx"),
 ).strip()
-TELEGRAM_TOKEN_FROM_ENV = os.environ.get("TELEGRAM_TOKEN", "").strip()
-TELEGRAM_CHAT_ID_FROM_ENV = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
-TELEGRAM_TOKEN_RESOLVED = os.environ.get("TELEGRAM_TOKEN", TELEGRAM_TOKEN).strip()
-TELEGRAM_CHAT_ID_RESOLVED = os.environ.get("TELEGRAM_CHAT_ID", TELEGRAM_CHAT_ID).strip()
+TELEGRAM_TOKEN_FROM_ENV = os.environ.get("8782386140:AAGie0EfONP9qm6XvAQ2mYBFfSmH_9Qhn2A", "").strip()
+TELEGRAM_CHAT_ID_FROM_ENV = os.environ.get("-1003742537108", "").strip()
+TELEGRAM_TOKEN_RESOLVED = os.environ.get("8782386140:AAGie0EfONP9qm6XvAQ2mYBFfSmH_9Qhn2A", TELEGRAM_TOKEN).strip()
+TELEGRAM_CHAT_ID_RESOLVED = os.environ.get("-1003742537108", TELEGRAM_CHAT_ID).strip()
 
 # ── Logger ──────────────────────────────────────────────────────
 logging.basicConfig(
