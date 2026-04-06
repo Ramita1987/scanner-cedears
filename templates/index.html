@@ -41,11 +41,10 @@ nav{position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(6,10,15,.96)
 .hero-title span{color:var(--green)}
 .inicio-grid{
   display:grid;
-  grid-template-columns:290px 290px 1fr 285px;
+  grid-template-columns:320px 1fr 285px;
   grid-template-areas:
     "usd usd usd usd"
-    "idx com news top"
-    "cry cry news top";
+    "idx news top";
   gap:1px;
   background:var(--border);
   min-height:calc(100vh - 120px)
@@ -54,8 +53,6 @@ nav{position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(6,10,15,.96)
 .band{border-top:3px solid}
 .band-usd{grid-area:usd;border-top-color:#ffd400}
 .band-idx{grid-area:idx;border-top-color:#ff3d57}
-.band-com{grid-area:com;border-top-color:#2979ff}
-.band-cry{grid-area:cry;border-top-color:#ff9100}
 .band-news{grid-area:news;border-top-color:#00e676}
 .band-top{grid-area:top;border-top-color:#a855f7}
 .band-top .mover-item{border-color:#a855f733}
@@ -240,8 +237,7 @@ tr:hover td{background:var(--bg3)}
     grid-template-columns:1fr 1fr;
     grid-template-areas:
       "usd usd"
-      "idx com"
-      "cry cry"
+      "idx idx"
       "news top";
   }
   .usd-row{grid-template-columns:repeat(2,minmax(150px,1fr))}
@@ -254,8 +250,6 @@ tr:hover td{background:var(--bg3)}
     grid-template-areas:
       "usd"
       "idx"
-      "com"
-      "cry"
       "news"
       "top";
   }
@@ -319,16 +313,6 @@ tr:hover td{background:var(--bg3)}
     <div class="icol band band-idx">
       <div class="col-title">📊 Índices</div>
       <div id="idx-list"><div class="placeholder">Cargando...</div></div>
-    </div>
-
-    <div class="icol band band-com">
-      <div class="col-title">🛢️ Commodities</div>
-      <div id="com-list"><div class="placeholder">Cargando...</div></div>
-    </div>
-
-    <div class="icol band band-cry">
-      <div class="col-title">₿ Crypto</div>
-      <div id="crypto-list"><div class="placeholder">Cargando...</div></div>
     </div>
 
     <div class="icol band band-news">
@@ -519,56 +503,66 @@ function showPage(n){
 }
 
 // ── Market (lazy load) ───────────────────────────────────
-const IDX=[{n:'S&P 500',s:'^GSPC'},{n:'NASDAQ',s:'^IXIC'},{n:'Dow Jones',s:'^DJI'},{n:'Russell 2000',s:'^RUT'},{n:'VIX',s:'^VIX'},{n:'Merval',s:'^MERV'}];
-const COM=[{n:'Oro',s:'GC=F'},{n:'Petróleo WTI',s:'CL=F'},{n:'Plata',s:'SI=F'},{n:'Cobre',s:'HG=F'}];
-const CRYPTO=[{n:'Bitcoin (BTC)',s:'BTC-USD'},{n:'Ethereum (ETH)',s:'ETH-USD'}];
+const IDX=[{n:'S&P 500',s:'^GSPC'},{n:'NASDAQ',s:'^IXIC'},{n:'Dow Jones',s:'^DJI'},{n:'Russell 2000',s:'^RUT'},{n:'VIX',s:'^VIX'},{n:'Bitcoin (BTC)',s:'BTC'}];
 const WL=['AAPL','MSFT','GOOGL','AMZN','NVDA','META','TSLA','JPM','BAC','V','MA','XOM','CVX','JNJ','UNH','GGAL','YPF','MELI','NU','BABA'];
 
 function fp(v){if(v===undefined||v===null||isNaN(v))return'—';return v>=1000?v.toLocaleString('en-US',{maximumFractionDigits:0}):v.toFixed(2);}
 function cc(v){return(v>0)?'up':(v<0)?'down':'flat';}
 function cs(v){if(v===undefined||v===null||isNaN(v))return'—';return v>0?`+${v.toFixed(2)}%`:`${v.toFixed(2)}%`;}
 
+function hasMarketData(d){
+  if(!d)return false;
+  const hasRow=(arr)=>Array.isArray(arr)&&arr.some(i=>i&&i.d&&i.d.price!==undefined&&i.d.price!==null);
+  const hasMov=(arr)=>Array.isArray(arr)&&arr.length>0;
+  return hasRow(d.indices)||hasMov(d.gainers)||hasMov(d.losers);
+}
+
+function renderMarket(d){
+  document.getElementById('idx-list').innerHTML=
+    (d.indices||[]).map(i=>mrow(i.n,i.d?.price,i.d?.chg_pct)).join('')||
+    '<div class="placeholder">Sin datos</div>';
+
+  document.getElementById('gainers').innerHTML=
+    (d.gainers||[]).map(m=>mvrow(m.s,m.price,m.chg_pct)).join('')||
+    '<div class="placeholder">Sin datos</div>';
+
+  document.getElementById('losers').innerHTML=
+    (d.losers||[]).map(m=>mvrow(m.s,m.price,m.chg_pct)).join('')||
+    '<div class="placeholder">Sin datos</div>';
+
+  const dol=d.dolar||{};
+  document.getElementById('dol-list').innerHTML=
+    Object.entries(dol).map(([k,v])=>
+      `<div class="usd-card"><div class="usd-name">${k}</div><div class="usd-v">$${v.venta?.toFixed(0)||'—'}</div><div class="usd-c">compra $${v.compra?.toFixed(0)||'—'}</div></div>`
+    ).join('')||'<div class="placeholder">Sin datos</div>';
+}
+
 async function loadMarket(){
   try{
     const r=await fetch('/market');
     if(!r.ok)throw new Error('HTTP '+r.status);
     const d=await r.json();
-
-    // Indices
-    document.getElementById('idx-list').innerHTML=
-      (d.indices||[]).map(i=>mrow(i.n,i.d?.price,i.d?.chg_pct)).join('')||
-      '<div class="placeholder">Sin datos</div>';
-
-    // Commodities
-    document.getElementById('com-list').innerHTML=
-      (d.commodities||[]).map(i=>mrow(i.n,i.d?.price,i.d?.chg_pct)).join('')||
-      '<div class="placeholder">Sin datos</div>';
-
-    // Crypto
-    document.getElementById('crypto-list').innerHTML=
-      (d.crypto||[]).map(i=>mrow(i.n,i.d?.price,i.d?.chg_pct)).join('')||
-      '<div class="placeholder">Sin datos</div>';
-
-    // Gainers
-    document.getElementById('gainers').innerHTML=
-      (d.gainers||[]).map(m=>mvrow(m.s,m.price,m.chg_pct)).join('')||
-      '<div class="placeholder">Sin datos</div>';
-
-    // Losers
-    document.getElementById('losers').innerHTML=
-      (d.losers||[]).map(m=>mvrow(m.s,m.price,m.chg_pct)).join('')||
-      '<div class="placeholder">Sin datos</div>';
-
-    // Dolar
-    const dol=d.dolar||{};
-    document.getElementById('dol-list').innerHTML=
-      Object.entries(dol).map(([k,v])=>
-        `<div class="usd-card"><div class="usd-name">${k}</div><div class="usd-v">$${v.venta?.toFixed(0)||'—'}</div><div class="usd-c">compra $${v.compra?.toFixed(0)||'—'}</div></div>`
-      ).join('')||'<div class="placeholder">Sin datos</div>';
-
+    if(hasMarketData(d)){
+      renderMarket(d);
+      try{localStorage.setItem('market_last_ok',JSON.stringify(d));}catch{}
+      return;
+    }
+    try{
+      const cached=JSON.parse(localStorage.getItem('market_last_ok')||'null');
+      if(cached){
+        cached.dolar=d.dolar||cached.dolar||{};
+        renderMarket(cached);
+        return;
+      }
+    }catch{}
+    renderMarket(d);
   }catch(e){
     console.error('loadMarket error:',e);
-    ['idx-list','com-list','crypto-list','gainers','losers'].forEach(id=>{
+    try{
+      const cached=JSON.parse(localStorage.getItem('market_last_ok')||'null');
+      if(cached){renderMarket(cached);return;}
+    }catch{}
+    ['idx-list','gainers','losers','dol-list'].forEach(id=>{
       document.getElementById(id).innerHTML='<div class="placeholder">Error cargando datos</div>';
     });
   }
