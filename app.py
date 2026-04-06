@@ -20,6 +20,21 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 app = Flask(__name__)
 
+SECTOR_MAP = {
+    "tec": ["AAPL", "MSFT", "NVDA", "META", "GOOGL", "AMZN", "TSLA", "AMD", "AVGO", "CRM"],
+    "fin": ["JPM", "BAC", "V", "MA", "AXP", "PYPL", "GS", "MS"],
+    "ene": ["XOM", "CVX", "OXY", "EQNR", "SLB", "EOG"],
+    "sal": ["JNJ", "UNH", "LLY", "ABBV", "PFE", "MRK"],
+    "con": ["WMT", "KO", "PEP", "PG", "MCD", "COST"],
+    "disc": ["NKE", "SBUX", "HD", "TGT", "BKNG", "LOW", "GM", "F"],
+    "util": ["NEE", "DUK", "SO", "D", "AEP", "EXC", "SRE", "XEL", "AWK"],
+    "ind": ["CAT", "DE", "GE", "LMT", "BA", "HON", "RTX", "UPS"],
+    "arg": ["GGAL", "YPF", "PAM", "SUPV", "BBAR", "BMA", "VIST", "EDN"],
+    "bra": ["MELI", "NU", "PBR", "STNE", "PAGS", "BBD", "XP"],
+    "chi": ["BABA", "BIDU", "JD", "PDD", "NIO", "FXI"],
+    "nuc": ["CEG", "NXE", "URA", "CCJ"],
+}
+
 # ── API Keys ─────────────────────────────────────────────────────
 AV_KEY  = os.environ.get("AV_KEY",  "6IFZV2E8RQ6BMJ0L")   # Alpha Vantage
 FMP_KEY = os.environ.get("FMP_KEY", "aiQvIiYs0bc5eOheSFHH2c4kmi4lRVhr")                 # Financial Modeling Prep (free)
@@ -1144,6 +1159,89 @@ def health_data():
 
     out["snapshot_exists"] = os.path.exists(MARKET_SNAPSHOT_PATH)
     out["market_cached"] = bool(get_cache("market", ttl=3600))
+    return jsonify(out)
+
+
+@app.route("/sector_health")
+def sector_health():
+    """
+    Diagnóstico de sectores.
+    Uso:
+      /sector_health?sector=fin
+      /sector_health?tickers=AAPL,MSFT,TSLA
+      /sector_health?all=1
+    """
+    all_flag = request.args.get("all", "").strip() == "1"
+    tickers_arg = request.args.get("tickers", "").strip()
+    sector = request.args.get("sector", "tec").strip().lower()
+
+    selected = {}
+    if tickers_arg:
+        selected["custom"] = [t.strip().upper() for t in tickers_arg.split(",") if t.strip()]
+    elif all_flag:
+        selected = {k: v[:] for k, v in SECTOR_MAP.items()}
+    else:
+        selected[sector] = SECTOR_MAP.get(sector, [])
+
+    out = {"ok": True, "requested": {"all": all_flag, "sector": sector, "tickers": tickers_arg}, "sectors": {}}
+    for sk, tickers in selected.items():
+        rows = []
+        ok_count = 0
+        for sym in tickers:
+            d912 = data912_daily(sym, timeseries=20)
+            merged = fmp_daily(sym, timeseries=20)
+            has = len(merged) >= 5
+            if has:
+                ok_count += 1
+            rows.append({
+                "ticker": sym,
+                "ok": has,
+                "data912_rows": len(d912),
+                "merged_rows": len(merged),
+                "last_close": merged[-1]["close"] if has else None,
+                "last_date": merged[-1]["date"] if has else None,
+            })
+        out["sectors"][sk] = {
+            "total": len(tickers),
+            "ok": ok_count,
+            "missing": len(tickers) - ok_count,
+            "tickers": rows,
+        }
+    return jsonify(out)
+
+
+@app.route("/scanner_health")
+def scanner_health():
+    """
+    Diagnóstico rápido del scanner para ver si consigue datos.
+    Uso:
+      /scanner_health
+      /scanner_health?tickers=AAPL,MSFT,TSLA
+    """
+    tickers_arg = request.args.get("tickers", "").strip()
+    tickers = [t.strip().upper() for t in tickers_arg.split(",") if t.strip()] if tickers_arg else [
+        "AAPL", "MSFT", "NVDA", "GGAL", "BABA", "XOM"
+    ]
+
+    out = {"ok": True, "tickers": [], "note": "daily_ok usa fuente resiliente del scanner (Yahoo/FMP/Data912)."}
+    try:
+        import scanner as sc
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"no se pudo importar scanner: {e}"})
+
+    for sym in tickers:
+        row = {"ticker": sym, "daily_ok": False, "hourly_ok": False, "error": ""}
+        try:
+            df_d, df_h = sc.fetch_data_resilient(sym)
+            dlen = len(df_d) if df_d is not None else 0
+            hlen = len(df_h) if df_h is not None else 0
+            row["daily_rows"] = dlen
+            row["hourly_rows"] = hlen
+            row["daily_ok"] = dlen >= 30
+            row["hourly_ok"] = hlen >= 20
+        except Exception as e:
+            row["error"] = str(e)
+        out["tickers"].append(row)
     return jsonify(out)
 
 
