@@ -712,8 +712,9 @@ def run_scanner_thread(session: str, params: dict = None, active_setups: list = 
         scanner_state["results"]  = top
         scanner_state["last_run"] = datetime.now().strftime("%d/%m/%Y %H:%M")
         excel_status = {"excel_ok": False, "excel_reason": "sin señales", "sheets_ok": False, "sheets_reason": "sin señales"}
-        if top:
-            excel_status = sc.guardar_excel(top, session)
+        # Guardar historial completo (no solo top), para que Sheets quede "completo".
+        if resultados:
+            excel_status = sc.guardar_excel(resultados, session)
         tg_status = sc.send_telegram_status(sc.build_telegram_message(top, session))
         scanner_state["log"].append(
             f"📣 Telegram: {'OK' if tg_status.get('ok') else 'ERROR'} — {tg_status.get('reason','')}"
@@ -1278,6 +1279,10 @@ def news():
     cached = get_cache("news", ttl=300)
     if cached: return jsonify(cached)
     feeds = [
+        # Internacional
+        ("Investing",   "https://es.investing.com/rss/news_25.rss"),
+        ("FinancialJuice", "https://www.financialjuice.com/feed"),
+        # Locales
         ("El Cronista",  "https://www.cronista.com/files/rss/mercados.xml"),
         ("Ámbito",       "https://www.ambito.com/rss/pages/economia.html"),
         ("Infobae",      "https://www.infobae.com/feeds/rss/economia/"),
