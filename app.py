@@ -642,6 +642,28 @@ def build_market_payload() -> dict:
     market_fmp = {}
     market_yf = {}
     movers_fmp = {}
+    d912_hist_quote_cache = {}
+
+    def d912_hist_quote_first(symbols: list) -> tuple:
+        for sym in symbols:
+            s = (sym or "").strip().upper()
+            if not s:
+                continue
+            if s in d912_hist_quote_cache:
+                q = d912_hist_quote_cache[s]
+            else:
+                h = data912_daily(s, timeseries=5)
+                q = {}
+                if len(h) >= 1:
+                    last = _to_float(h[-1].get("close"), default=None)
+                    prev = _to_float(h[-2].get("close"), default=last) if len(h) >= 2 else last
+                    if last is not None:
+                        chg = ((last - prev) / prev * 100) if prev else 0.0
+                        q = {"price": round(last, 2), "chg_pct": round(chg, 2)}
+                d912_hist_quote_cache[s] = q
+            if q and q.get("price") is not None:
+                return q, s
+        return {}, ""
 
     def need_more_core_data() -> bool:
         for row in idx_defs + com_defs + cry_defs:
@@ -673,6 +695,9 @@ def build_market_payload() -> dict:
         q, src = _pick_quote(market_d912, row["av"])
         if q:
             return q, f"D912:{src}"
+        q, src = d912_hist_quote_first(row["av"])
+        if q:
+            return q, f"D912H:{src}"
         q, src = _pick_quote(market_fmp, row["fmp"])
         if q:
             return q, f"FMP:{src}"
@@ -703,6 +728,10 @@ def build_market_payload() -> dict:
     for sym in wl_syms:
         if sym in market_d912 and market_d912[sym].get("price") is not None:
             movers_data[sym] = market_d912[sym]
+            continue
+        q, _ = d912_hist_quote_first([sym])
+        if q:
+            movers_data[sym] = q
             continue
         if sym in movers_fmp and movers_fmp[sym].get("price") is not None:
             movers_data[sym] = movers_fmp[sym]
@@ -1100,6 +1129,9 @@ def health_data():
     t0 = time.time()
     d912_rows = data912_live_usa()
     out["data912"] = {"rows": len(d912_rows), "ms": int((time.time() - t0) * 1000)}
+    t0b = time.time()
+    d912_spy_hist = data912_daily("SPY", timeseries=5)
+    out["data912_hist_spy"] = {"rows": len(d912_spy_hist), "ms": int((time.time() - t0b) * 1000)}
 
     t1 = time.time()
     fmp = fmp_quote_safe(["SPY", "AAPL"])
