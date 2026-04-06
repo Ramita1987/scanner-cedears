@@ -596,7 +596,10 @@ def run_scanner_thread(session: str, params: dict = None, active_setups: list = 
 def get_historial():
     try:
         from openpyxl import load_workbook
-        archivo = os.path.join(os.path.dirname(os.path.abspath(__file__)), "registros_scanner.xlsx")
+        archivo = os.environ.get(
+            "REGISTROS_PATH",
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "registros_scanner.xlsx"),
+        ).strip()
         if not os.path.exists(archivo): return []
         wb = load_workbook(archivo); ws = wb.active
         rows = []
@@ -1285,14 +1288,18 @@ def scanner_integrations():
         import scanner as sc
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
-    tg_token = bool(getattr(sc, "TELEGRAM_TOKEN_RESOLVED", ""))
-    tg_chat = bool(getattr(sc, "TELEGRAM_CHAT_ID_RESOLVED", ""))
+    tg_token_val = (getattr(sc, "TELEGRAM_TOKEN_RESOLVED", "") or "").strip()
+    tg_chat_val = (getattr(sc, "TELEGRAM_CHAT_ID_RESOLVED", "") or "").strip()
+    tg_token = bool(tg_token_val) and tg_token_val != "TU_TOKEN_AQUI"
+    tg_chat = bool(tg_chat_val) and tg_chat_val != "TU_CHAT_ID_AQUI"
     gs_url = (getattr(sc, "GOOGLE_SHEETS_WEBHOOK_URL", "") or "").strip()
     return jsonify({
         "ok": True,
         "telegram_token_set": tg_token,
         "telegram_chat_set": tg_chat,
         "telegram_configured": tg_token and tg_chat,
+        "telegram_token_source_env": bool((getattr(sc, "TELEGRAM_TOKEN_FROM_ENV", "") or "").strip()),
+        "telegram_chat_source_env": bool((getattr(sc, "TELEGRAM_CHAT_ID_FROM_ENV", "") or "").strip()),
         "sheets_url_set": bool(gs_url),
         "sheets_url_looks_valid": ("script.google.com/macros/" in gs_url),
     })
