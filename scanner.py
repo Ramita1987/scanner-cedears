@@ -23,6 +23,8 @@ from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, TOP_N, MIN_PROBABILITY, CED
 
 FMP_KEY = os.environ.get("FMP_KEY", "")
 GOOGLE_SHEETS_WEBHOOK_URL = os.environ.get("GOOGLE_SHEETS_WEBHOOK_URL", "").strip()
+TELEGRAM_TOKEN_RESOLVED = os.environ.get("TELEGRAM_TOKEN", TELEGRAM_TOKEN).strip()
+TELEGRAM_CHAT_ID_RESOLVED = os.environ.get("TELEGRAM_CHAT_ID", TELEGRAM_CHAT_ID).strip()
 
 # ── Logger ──────────────────────────────────────────────────────
 logging.basicConfig(
@@ -606,54 +608,70 @@ def build_telegram_message(oportunidades: list, session_name: str) -> str:
     return header + body + footer
 
 
-def send_telegram(message: str) -> bool:
-    if not TELEGRAM_TOKEN or TELEGRAM_TOKEN == "TU_TOKEN_AQUI":
-        log.warning("Telegram no configurado — omitiendo envío.")
-        print("\n" + "─" * 50)
-        print("MENSAJE QUE SE ENVIARÍA A TELEGRAM:")
-        print("─" * 50)
-        print(message)
-        return False
+def send_telegram_status(message: str) -> dict:
+    if not TELEGRAM_TOKEN_RESOLVED or TELEGRAM_TOKEN_RESOLVED == "TU_TOKEN_AQUI":
+        msg = "Telegram no configurado (TOKEN)."
+        log.warning(msg + " Omitiendo envío.")
+        return {"ok": False, "reason": msg}
+    if not TELEGRAM_CHAT_ID_RESOLVED or TELEGRAM_CHAT_ID_RESOLVED == "TU_CHAT_ID_AQUI":
+        msg = "Telegram no configurado (CHAT_ID)."
+        log.warning(msg + " Omitiendo envío.")
+        return {"ok": False, "reason": msg}
 
-    url     = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN_RESOLVED}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID_RESOLVED, "text": message, "parse_mode": "Markdown"}
 
     try:
         r = requests.post(url, json=payload, timeout=15)
         if r.status_code == 200:
             log.info("✅ Mensaje enviado a Telegram.")
-            return True
-        else:
-            log.error(f"❌ Error Telegram {r.status_code}: {r.text[:200]}")
-            return False
+            return {"ok": True, "reason": "enviado"}
+        msg = f"HTTP {r.status_code}: {r.text[:200]}"
+        log.error(f"❌ Error Telegram {msg}")
+        return {"ok": False, "reason": msg}
     except Exception as e:
-        log.error(f"❌ Excepción Telegram: {e}")
-        return False
+        msg = str(e)
+        log.error(f"❌ Excepción Telegram: {msg}")
+        return {"ok": False, "reason": msg}
+
+
+def send_telegram(message: str) -> bool:
+    return bool(send_telegram_status(message).get("ok"))
 
 
 # ═══════════════════════════════════════════════════════════════
 #  REGISTRO EXCEL
 # ═══════════════════════════════════════════════════════════════
 
-def _send_google_sheets_rows(rows: list) -> None:
+def _send_google_sheets_rows(rows: list) -> dict:
     """
     Envia filas a un webhook (Apps Script) para guardar en Google Sheets.
     Espera la variable de entorno GOOGLE_SHEETS_WEBHOOK_URL.
     """
-    if not GOOGLE_SHEETS_WEBHOOK_URL or not rows:
-        return
+    if not rows:
+        return {"ok": False, "reason": "sin filas"}
+    if not GOOGLE_SHEETS_WEBHOOK_URL:
+        return {"ok": False, "reason": "GOOGLE_SHEETS_WEBHOOK_URL vacío"}
+    if "script.google.com/macros/" not in GOOGLE_SHEETS_WEBHOOK_URL:
+        msg = "GOOGLE_SHEETS_WEBHOOK_URL no parece ser Web App de Apps Script."
+        log.warning(msg)
+        return {"ok": False, "reason": msg}
     try:
         r = requests.post(GOOGLE_SHEETS_WEBHOOK_URL, json={"rows": rows}, timeout=15)
         if 200 <= r.status_code < 300:
             log.info(f"Google Sheets actualizado ({len(rows)} filas).")
+            return {"ok": True, "reason": f"{len(rows)} filas"}
         else:
             log.warning(f"Google Sheets webhook {r.status_code}: {r.text[:180]}")
+            return {"ok": False, "reason": f"HTTP {r.status_code}: {r.text[:120]}"}
     except Exception as e:
         log.warning(f"No se pudo enviar a Google Sheets: {e}")
+        return {"ok": False, "reason": str(e)}
 
 
 def guardar_excel(oportunidades: list, session_name: str):
     """Guarda las oportunidades en un Excel acumulativo."""
+    status = {"excel_ok": False, "excel_reason": "", "sheets_ok": False, "sheets_reason": ""}
     try:
         from openpyxl import Workbook, load_workbook
         from openpyxl.styles import Font, PatternFill
@@ -712,11 +730,17 @@ def guardar_excel(oportunidades: list, session_name: str):
             })
 
         wb.save(archivo)
-        _send_google_sheets_rows(gs_rows)
+        status["excel_ok"] = True
+        status["excel_reason"] = archivo
+        gs_status = _send_google_sheets_rows(gs_rows)
+        status["sheets_ok"] = bool(gs_status.get("ok"))
+        status["sheets_reason"] = gs_status.get("reason", "")
         log.info(f"✅ Excel actualizado: {archivo}")
 
     except Exception as e:
         log.error(f"❌ Error guardando Excel: {e}")
+        status["excel_reason"] = str(e)
+    return status
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -747,11 +771,14 @@ def main(session: str = "MANUAL"):
 
     # Enviar Telegram
     msg = build_telegram_message(oportunidades, session)
-    send_telegram(msg)
+    tg = send_telegram_status(msg)
+    log.info(f"Estado Telegram: {'OK' if tg.get('ok') else 'ERROR'} — {tg.get('reason','')}")
 
     # Guardar en Excel
     if oportunidades:
-        guardar_excel(oportunidades, session)
+        st = guardar_excel(oportunidades, session)
+        log.info(f"Estado Excel: {'OK' if st.get('excel_ok') else 'ERROR'} — {st.get('excel_reason','')}")
+        log.info(f"Estado Sheets: {'OK' if st.get('sheets_ok') else 'ERROR'} — {st.get('sheets_reason','')}")
 
     return oportunidades
 
