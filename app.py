@@ -8,6 +8,7 @@
 from flask import Flask, render_template, jsonify, request
 import threading
 import os, sys, time
+import json
 import requests
 import feedparser
 from datetime import datetime
@@ -25,6 +26,7 @@ FMP_KEY = os.environ.get("FMP_KEY", "aiQvIiYs0bc5eOheSFHH2c4kmi4lRVhr")         
 
 # ── Cache global ─────────────────────────────────────────────────
 _cache = {}
+MARKET_SNAPSHOT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "market_last_ok.json")
 
 def get_cache(key, ttl=600):
     """Retorna valor cacheado si no expiró (ttl en segundos)."""
@@ -43,6 +45,105 @@ def set_cache(key, val):
         return val
     _cache[key] = (val, datetime.now())
     return val
+
+
+def load_market_snapshot() -> dict:
+    try:
+        if not os.path.exists(MARKET_SNAPSHOT_PATH):
+            return {}
+        with open(MARKET_SNAPSHOT_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_market_snapshot(payload: dict):
+    try:
+        if not isinstance(payload, dict) or not payload:
+            return
+        with open(MARKET_SNAPSHOT_PATH, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def data912_live_usa() -> list:
+    """Panel USA live de Data912."""
+    cached = get_cache("d912_live_usa", ttl=180)
+    if cached:
+        return cached
+    try:
+        r = requests.get(
+            "https://data912.com/live/usa_stocks",
+            timeout=12,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        if r.status_code != 200:
+            return []
+        payload = r.json()
+        if not isinstance(payload, list):
+            return []
+        set_cache("d912_live_usa", payload)
+        return payload
+    except Exception:
+        return []
+
+
+def data912_quote_map(symbols: list) -> dict:
+    """Mapa symbol -> {price, chg_pct} usando /live/usa_stocks."""
+    out = {}
+    if not symbols:
+        return out
+    wanted = {str(s).strip().upper() for s in symbols if str(s).strip()}
+    if not wanted:
+        return out
+    rows = data912_live_usa()
+    for row in rows:
+        try:
+            sym = str(row.get("symbol", "")).strip().upper()
+            if sym not in wanted:
+                continue
+            price = _to_float(row.get("c"), default=None)
+            if price is None:
+                continue
+            chg = _to_float(row.get("pct_change"), default=0.0)
+            out[sym] = {"price": round(price, 2), "chg_pct": round(chg, 2)}
+        except Exception:
+            continue
+    return out
+
+
+def data912_daily(symbol: str, timeseries: int = 130) -> list:
+    """Histórico diario Data912 (cedears -> stocks)."""
+    key = f"d912d_{symbol}_{timeseries}"
+    cached = get_cache(key, ttl=3600)
+    if cached:
+        return cached
+    sym = (symbol or "").strip().upper()
+    if not sym:
+        return []
+    for endpoint in (f"cedears/{sym}", f"stocks/{sym}"):
+        try:
+            url = f"https://data912.com/historical/{endpoint}"
+            r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+            if r.status_code != 200:
+                continue
+            payload = r.json()
+            if not isinstance(payload, list) or not payload:
+                continue
+            hist = []
+            for row in payload:
+                d = row.get("date")
+                c = _to_float(row.get("c"), default=None)
+                if d and c is not None:
+                    hist.append({"date": d, "close": round(c, 2)})
+            if len(hist) >= 5:
+                set_cache(key, hist[-timeseries:])
+                return hist[-timeseries:]
+        except Exception:
+            continue
+    return []
 
 # ── Estado scanner ────────────────────────────────────────────────
 scanner_state = {
@@ -367,6 +468,9 @@ def fmp_daily(symbol: str, timeseries: int = 130) -> list:
                 return set_cache(f"fmpd_{symbol}", hist[-timeseries:])
     except Exception:
         pass
+    d912_hist = data912_daily(symbol, timeseries=timeseries)
+    if len(d912_hist) >= 5:
+        return d912_hist
     av_hist = av_daily(symbol)
     if len(av_hist) >= 5:
         return av_hist
@@ -536,6 +640,7 @@ def build_market_payload() -> dict:
 
     market_fmp = fmp_quote_safe(fmp_pool)
     market_yf = yf_quote_bulk(yf_pool)
+    market_d912 = data912_quote_map(yf_pool)
     movers_fmp = fmp_quote_safe(wl_syms)
 
     def pick_market(row):
@@ -545,6 +650,9 @@ def build_market_payload() -> dict:
         q, src = _pick_quote(market_yf, row["yf"])
         if q:
             return q, f"YF:{src}"
+        q, src = _pick_quote(market_d912, row["av"])
+        if q:
+            return q, f"D912:{src}"
         q, src = av_quote_first(row["av"])
         if q:
             return q, f"AV:{src}"
@@ -573,6 +681,9 @@ def build_market_payload() -> dict:
         if sym in market_yf and market_yf[sym].get("price") is not None:
             movers_data[sym] = market_yf[sym]
             continue
+        if sym in market_d912 and market_d912[sym].get("price") is not None:
+            movers_data[sym] = market_d912[sym]
+            continue
         q, _ = av_quote_first([sym])
         if q:
             movers_data[sym] = q
@@ -599,12 +710,17 @@ def build_market_payload() -> dict:
     if has_data:
         set_cache("market", result)
         set_cache("market_last_ok", result)
+        save_market_snapshot(result)
         return result
 
     last_ok = get_cache("market_last_ok", ttl=86400)
     if last_ok:
         last_ok["dolar"] = result.get("dolar", {})
         return last_ok
+    snap = load_market_snapshot()
+    if snap:
+        snap["dolar"] = result.get("dolar", {})
+        return snap
     return result
 
 
