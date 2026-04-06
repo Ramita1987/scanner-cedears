@@ -78,6 +78,40 @@ def _fmp_daily_ohlc(ticker: str) -> Optional[pd.DataFrame]:
         return None
 
 
+def _data912_daily_ohlc(ticker: str) -> Optional[pd.DataFrame]:
+    """Fallback diario via Data912."""
+    t = (ticker or "").strip().upper()
+    if not t:
+        return None
+    try_paths = [f"cedears/{t}", f"stocks/{t}"]
+    for p in try_paths:
+        try:
+            url = f"https://data912.com/historical/{p}"
+            r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+            if r.status_code != 200:
+                continue
+            rows = r.json()
+            if not isinstance(rows, list) or not rows:
+                continue
+            df = pd.DataFrame(rows)
+            req = {"date", "o", "h", "l", "c", "v"}
+            if not req.issubset(df.columns):
+                continue
+            df = df[["date", "o", "h", "l", "c", "v"]].copy()
+            df.rename(columns={"o": "open", "h": "high", "l": "low", "c": "close", "v": "volume"}, inplace=True)
+            df["date"] = pd.to_datetime(df["date"])
+            df.sort_values("date", inplace=True)
+            df.set_index("date", inplace=True)
+            for col in ["open", "high", "low", "close", "volume"]:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+            df.dropna(subset=["close", "volume"], inplace=True)
+            if len(df) >= 30:
+                return df
+        except Exception:
+            continue
+    return None
+
+
 def _normalize_ohlc(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [c.lower() for c in df.columns]
@@ -110,6 +144,11 @@ def fetch_data_resilient(ticker: str) -> tuple:
         df_fmp = _fmp_daily_ohlc(ticker)
         if df_fmp is not None and len(df_fmp) >= 30:
             df_d = _normalize_ohlc(df_fmp)
+
+    if df_d.empty or len(df_d) < 30:
+        df_d912 = _data912_daily_ohlc(ticker)
+        if df_d912 is not None and len(df_d912) >= 30:
+            df_d = _normalize_ohlc(df_d912)
 
     if df_d.empty or len(df_d) < 30:
         return None, None
