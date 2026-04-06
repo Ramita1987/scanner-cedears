@@ -37,6 +37,58 @@ SECTOR_MAP = {
     "nuc": ["CEG", "NXE", "URA", "CCJ"],
 }
 
+SECTOR_ETF_PROXY = {
+    "tec": "XLK",
+    "fin": "XLF",
+    "ene": "XLE",
+    "sal": "XLV",
+    "con": "XLP",
+    "disc": "XLY",
+    "util": "XLU",
+    "ind": "XLI",
+    "arg": "ARGT",
+    "bra": "EWZ",
+    "chi": "FXI",
+    "nuc": "URA",
+}
+
+SYMBOL_PROXY = {
+    "BAC": "XLF",
+    "MS": "XLF",
+    "UNH": "XLV",
+    "OXY": "XLE",
+    "EQNR": "XLE",
+    "SLB": "XLE",
+    "EOG": "XLE",
+    "PAM": "YPF",
+    "VIST": "YPF",
+    "NU": "EWZ",
+    "STNE": "EWZ",
+    "PAGS": "EWZ",
+    "XP": "EWZ",
+    "PDD": "FXI",
+    "FXI": "MCHI",
+    "RTX": "XLI",
+    "UPS": "XLI",
+    "NEE": "XLU",
+    "DUK": "XLU",
+    "SO": "XLU",
+    "D": "XLU",
+    "AEP": "XLU",
+    "EXC": "XLU",
+    "SRE": "XLU",
+    "XEL": "XLU",
+    "AWK": "XLU",
+    "CEG": "URA",
+    "NXE": "URA",
+    "CCJ": "URA",
+}
+
+TICKER_TO_SECTOR = {}
+for _sec_key, _sec_tickers in SECTOR_MAP.items():
+    for _t in _sec_tickers:
+        TICKER_TO_SECTOR[_t] = _sec_key
+
 SYMBOL_ALIASES = {
     "YPF": ["YPF.BA", "YPFD", "YPFD.BA"],
     "BAC": ["BAC.BA"],
@@ -574,6 +626,35 @@ def fmp_daily(symbol: str, timeseries: int = 130) -> list:
             return yf_hist
 
     return []
+
+
+def sector_daily_resilient(symbol: str, timeseries: int = 130) -> tuple:
+    """
+    Devuelve (hist, src_symbol, proxied) para sectores.
+    proxied=True cuando usa reemplazo por falta de cobertura del ticker original.
+    """
+    sym = (symbol or "").strip().upper()
+    if not sym:
+        return [], "", False
+
+    candidates = [sym]
+    direct_proxy = SYMBOL_PROXY.get(sym)
+    if direct_proxy and direct_proxy not in candidates:
+        candidates.append(direct_proxy)
+
+    sec = TICKER_TO_SECTOR.get(sym, "")
+    sec_proxy = SECTOR_ETF_PROXY.get(sec, "")
+    if sec_proxy and sec_proxy not in candidates:
+        candidates.append(sec_proxy)
+
+    if "SPY" not in candidates:
+        candidates.append("SPY")
+
+    for cand in candidates:
+        hist = fmp_daily(cand, timeseries=timeseries)
+        if len(hist) >= 5:
+            return hist, cand, cand != sym
+    return [], "", False
 
 
 def dolarapi() -> dict:
@@ -1136,12 +1217,18 @@ def sector_data():
         if cached:
             result[sym] = cached
             continue
-        hist = fmp_daily(sym)
+        hist, src_symbol, proxied = sector_daily_resilient(sym)
         if len(hist) < 5:
             continue
         last = hist[-1]["close"]
         prev = hist[-2]["close"] if len(hist)>=2 else last
-        d = {"price":last,"chg_pct":round((last-prev)/prev*100,2),"history":hist}
+        d = {
+            "price": last,
+            "chg_pct": round((last-prev)/prev*100, 2),
+            "history": hist,
+            "src_symbol": src_symbol or sym,
+            "proxied": proxied,
+        }
         result[sym] = set_cache(f"sec_{sym}", d)
     return jsonify(result)
 
@@ -1286,13 +1373,15 @@ def sector_health():
         ok_count = 0
         for sym in tickers:
             d912 = data912_daily(sym, timeseries=20)
-            merged = fmp_daily(sym, timeseries=20)
+            merged, src_symbol, proxied = sector_daily_resilient(sym, timeseries=20)
             has = len(merged) >= 5
             if has:
                 ok_count += 1
             rows.append({
                 "ticker": sym,
                 "ok": has,
+                "proxied": proxied,
+                "src_symbol": src_symbol if has else "",
                 "data912_rows": len(d912),
                 "merged_rows": len(merged),
                 "last_close": merged[-1]["close"] if has else None,
