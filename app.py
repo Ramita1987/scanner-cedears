@@ -613,7 +613,7 @@ def build_market_payload() -> dict:
         {"n": "Dow Jones", "s": "^DJI", "fmp": ["^DJI", "DIA"], "yf": ["^DJI", "DIA"], "av": ["DIA"]},
         {"n": "Russell 2000", "s": "^RUT", "fmp": ["^RUT", "IWM"], "yf": ["^RUT", "IWM"], "av": ["IWM"]},
         {"n": "VIX", "s": "^VIX", "fmp": ["^VIX", "VXX"], "yf": ["^VIX", "VXX"], "av": ["VXX"]},
-        {"n": "Merval", "s": "^MERV", "fmp": ["^MERV", "ARGT"], "yf": ["^MERV", "ARGT"], "av": ["ARGT"]},
+        {"n": "Bitcoin (BTC)", "s": "BTC", "fmp": ["BTCUSD", "IBIT", "MSTR"], "yf": ["BTC-USD", "IBIT", "MSTR"], "av": ["IBIT", "MSTR"]},
     ]
     com_defs = [
         {"n": "Oro", "fmp": ["GCUSD", "GLD"], "yf": ["GC=F", "GLD"], "av": ["GLD"]},
@@ -753,8 +753,8 @@ def build_market_payload() -> dict:
 
     result = {
         "indices": indices,
-        "commodities": commodities,
-        "crypto": crypto,
+        "commodities": [],
+        "crypto": [],
         "gainers": movers[:5],
         "losers": movers[-5:][::-1],
         "dolar": dolarapi(),
@@ -789,23 +789,19 @@ def build_market_payload() -> dict:
 
     if last_ok:
         result["indices"] = _merge_rows(result.get("indices", []), last_ok.get("indices", []), "n")
-        result["commodities"] = _merge_rows(result.get("commodities", []), last_ok.get("commodities", []), "n")
-        result["crypto"] = _merge_rows(result.get("crypto", []), last_ok.get("crypto", []), "n")
         if not result.get("gainers"):
             result["gainers"] = last_ok.get("gainers", [])
         if not result.get("losers"):
             result["losers"] = last_ok.get("losers", [])
 
     idx_ok = sum(1 for i in result["indices"] if i.get("d", {}).get("price") is not None)
-    com_ok = sum(1 for i in result["commodities"] if i.get("d", {}).get("price") is not None)
-    cry_ok = sum(1 for i in result["crypto"] if i.get("d", {}).get("price") is not None)
     mover_ok = len(result.get("gainers", [])) + len(result.get("losers", []))
     # Umbral más flexible para no perder respaldo en días con proveedores incompletos.
-    enough_for_snapshot = (idx_ok >= 2 and mover_ok >= 6) or (com_ok >= 2 and cry_ok >= 1 and mover_ok >= 6)
+    enough_for_snapshot = idx_ok >= 2 and mover_ok >= 6
 
     has_data = any(
         i.get("d", {}).get("price") is not None
-        for i in result.get("indices", []) + result.get("commodities", []) + result.get("crypto", [])
+        for i in result.get("indices", [])
     )
     has_data = has_data or len(result.get("gainers", [])) > 0 or len(result.get("losers", [])) > 0
     if has_data:
