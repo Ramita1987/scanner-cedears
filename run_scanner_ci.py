@@ -7,8 +7,8 @@ import os
 import sys
 
 # ── Leer credenciales desde variables de entorno ────────────────
-TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+TELEGRAM_TOKEN   = os.environ.get("8782386140:AAGie0EfONP9qm6XvAQ2mYBFfSmH_9Qhn2A", "")
+TELEGRAM_CHAT_ID = os.environ.get("-1003742537108", "")
 SESSION_NAME     = os.environ.get("SESSION_NAME", "MANUAL").upper()
 
 if not TELEGRAM_TOKEN:
