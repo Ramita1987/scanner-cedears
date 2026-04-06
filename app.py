@@ -11,6 +11,8 @@ import os, sys, time
 import json
 import requests
 import feedparser
+import csv
+import io
 from datetime import datetime
 from urllib.parse import quote
 import re
@@ -161,26 +163,27 @@ def data912_daily(symbol: str, timeseries: int = 130) -> list:
     sym = (symbol or "").strip().upper()
     if not sym:
         return []
-    for endpoint in (f"cedears/{sym}", f"stocks/{sym}"):
-        try:
-            url = f"https://data912.com/historical/{endpoint}"
-            r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
-            if r.status_code != 200:
+    for cand in symbol_candidates(sym):
+        for endpoint in (f"cedears/{cand}", f"stocks/{cand}"):
+            try:
+                url = f"https://data912.com/historical/{endpoint}"
+                r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+                if r.status_code != 200:
+                    continue
+                payload = r.json()
+                if not isinstance(payload, list) or not payload:
+                    continue
+                hist = []
+                for row in payload:
+                    d = row.get("date")
+                    c = _to_float(row.get("c"), default=None)
+                    if d and c is not None:
+                        hist.append({"date": d, "close": round(c, 2)})
+                if len(hist) >= 5:
+                    set_cache(key, hist[-timeseries:])
+                    return hist[-timeseries:]
+            except Exception:
                 continue
-            payload = r.json()
-            if not isinstance(payload, list) or not payload:
-                continue
-            hist = []
-            for row in payload:
-                d = row.get("date")
-                c = _to_float(row.get("c"), default=None)
-                if d and c is not None:
-                    hist.append({"date": d, "close": round(c, 2)})
-            if len(hist) >= 5:
-                set_cache(key, hist[-timeseries:])
-                return hist[-timeseries:]
-        except Exception:
-            continue
     return []
 
 # ── Estado scanner ────────────────────────────────────────────────
@@ -476,6 +479,50 @@ def yf_daily(symbol: str, timeseries: int = 130) -> list:
         return []
 
 
+def stooq_daily(symbol: str, timeseries: int = 130) -> list:
+    """Fallback Stooq (CSV) para histórico diario sin clave."""
+    cached = get_cache(f"stqd_{symbol}", ttl=3600)
+    if cached:
+        return cached
+    sym = (symbol or "").strip().upper()
+    if not sym:
+        return []
+    # Formato stooq: aapl.us, brk.b.us, spy.us
+    candidates = []
+    for cand in symbol_candidates(sym):
+        c = cand.lower()
+        if not c:
+            continue
+        if c.endswith(".ba"):
+            continue
+        if "." not in c:
+            c = f"{c}.us"
+        candidates.append(c)
+    for c in candidates:
+        try:
+            url = f"https://stooq.com/q/d/l/?s={c}&i=d"
+            r = requests.get(url, timeout=12, headers={"User-Agent": "Mozilla/5.0"})
+            if r.status_code != 200:
+                continue
+            text = (r.text or "").strip()
+            if not text or "No data" in text or text.startswith("<!DOCTYPE"):
+                continue
+            rows = list(csv.DictReader(io.StringIO(text)))
+            if not rows:
+                continue
+            hist = []
+            for row in rows:
+                d = (row.get("Date") or "").strip()
+                cclose = _to_float(row.get("Close"), default=None)
+                if d and cclose is not None:
+                    hist.append({"date": d, "close": round(cclose, 2)})
+            if len(hist) >= 5:
+                return set_cache(f"stqd_{symbol}", hist[-timeseries:])
+        except Exception:
+            continue
+    return []
+
+
 def fmp_daily(symbol: str, timeseries: int = 130) -> list:
     """Histórico diario FMP con fallback a Alpha Vantage."""
     cached = get_cache(f"fmpd_{symbol}", ttl=3600)
@@ -484,14 +531,16 @@ def fmp_daily(symbol: str, timeseries: int = 130) -> list:
     d912_hist = data912_daily(symbol, timeseries=timeseries)
     if len(d912_hist) >= 5:
         return d912_hist
-    try:
-        enc = quote(symbol, safe="")
-        url = (
-            f"https://financialmodelingprep.com/stable/historical-price-eod/full"
-            f"?symbol={enc}&apikey={FMP_KEY}"
-        )
-        r = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
-        if r.status_code == 200:
+    for cand in symbol_candidates(symbol):
+        try:
+            enc = quote(cand, safe="")
+            url = (
+                f"https://financialmodelingprep.com/stable/historical-price-eod/full"
+                f"?symbol={enc}&apikey={FMP_KEY}"
+            )
+            r = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
+            if r.status_code != 200:
+                continue
             payload = r.json()
             if isinstance(payload, list):
                 rows = payload
@@ -507,12 +556,24 @@ def fmp_daily(symbol: str, timeseries: int = 130) -> list:
                     hist.append({"date": date, "close": round(close, 2)})
             if len(hist) >= 5:
                 return set_cache(f"fmpd_{symbol}", hist[-timeseries:])
-    except Exception:
-        pass
-    av_hist = av_daily(symbol)
-    if len(av_hist) >= 5:
-        return av_hist
-    return yf_daily(symbol, timeseries=timeseries)
+        except Exception:
+            continue
+
+    stq_hist = stooq_daily(symbol, timeseries=timeseries)
+    if len(stq_hist) >= 5:
+        return stq_hist
+
+    for cand in symbol_candidates(symbol):
+        av_hist = av_daily(cand)
+        if len(av_hist) >= 5:
+            return av_hist
+
+    for cand in symbol_candidates(symbol):
+        yf_hist = yf_daily(cand, timeseries=timeseries)
+        if len(yf_hist) >= 5:
+            return yf_hist
+
+    return []
 
 
 def dolarapi() -> dict:
