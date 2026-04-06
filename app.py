@@ -731,22 +731,63 @@ def build_market_payload() -> dict:
         "dolar": dolarapi(),
     }
 
-    has_data = any(i.get("d", {}).get("price") is not None for i in indices + commodities + crypto)
-    has_data = has_data or len(movers) > 0
+    last_ok = get_cache("market_last_ok", ttl=86400) or load_market_snapshot()
+
+    def _merge_rows(cur_rows, old_rows, key_name):
+        old_map = {}
+        for r in (old_rows or []):
+            k = r.get(key_name)
+            if k:
+                old_map[k] = r
+        merged = []
+        for r in (cur_rows or []):
+            d = r.get("d", {}) if isinstance(r, dict) else {}
+            has_price = isinstance(d, dict) and d.get("price") is not None
+            if has_price:
+                merged.append(r)
+                continue
+            old = old_map.get(r.get(key_name), {})
+            old_d = old.get("d", {}) if isinstance(old, dict) else {}
+            if isinstance(old_d, dict) and old_d.get("price") is not None:
+                x = dict(r)
+                x["d"] = old_d
+                if not x.get("src"):
+                    x["src"] = old.get("src", "SNAPSHOT")
+                merged.append(x)
+            else:
+                merged.append(r)
+        return merged
+
+    if last_ok:
+        result["indices"] = _merge_rows(result.get("indices", []), last_ok.get("indices", []), "n")
+        result["commodities"] = _merge_rows(result.get("commodities", []), last_ok.get("commodities", []), "n")
+        result["crypto"] = _merge_rows(result.get("crypto", []), last_ok.get("crypto", []), "n")
+        if not result.get("gainers"):
+            result["gainers"] = last_ok.get("gainers", [])
+        if not result.get("losers"):
+            result["losers"] = last_ok.get("losers", [])
+
+    idx_ok = sum(1 for i in result["indices"] if i.get("d", {}).get("price") is not None)
+    com_ok = sum(1 for i in result["commodities"] if i.get("d", {}).get("price") is not None)
+    cry_ok = sum(1 for i in result["crypto"] if i.get("d", {}).get("price") is not None)
+    mover_ok = len(result.get("gainers", [])) + len(result.get("losers", []))
+    enough_for_snapshot = idx_ok >= 3 and com_ok >= 2 and cry_ok >= 1 and mover_ok >= 6
+
+    has_data = any(
+        i.get("d", {}).get("price") is not None
+        for i in result.get("indices", []) + result.get("commodities", []) + result.get("crypto", [])
+    )
+    has_data = has_data or len(result.get("gainers", [])) > 0 or len(result.get("losers", [])) > 0
     if has_data:
         set_cache("market", result)
-        set_cache("market_last_ok", result)
-        save_market_snapshot(result)
+        if enough_for_snapshot:
+            set_cache("market_last_ok", result)
+            save_market_snapshot(result)
         return result
 
-    last_ok = get_cache("market_last_ok", ttl=86400)
     if last_ok:
         last_ok["dolar"] = result.get("dolar", {})
         return last_ok
-    snap = load_market_snapshot()
-    if snap:
-        snap["dolar"] = result.get("dolar", {})
-        return snap
     return result
 
 
