@@ -4,11 +4,11 @@ on:
   schedule:
     # UTC (Argentina UTC-3)
     # 10:00 ARG = 13:00 UTC
-    - cron: "0 10 * * 1-5"
+    - cron: "0 13 * * 1-5"
     # 11:15 ARG = 14:15 UTC
-    - cron: "15 11 * * 1-5"
+    - cron: "15 13 * * 1-5"
     # 16:45 ARG = 19:45 UTC
-    - cron: "45 15 * * 1-5"
+    - cron: "45 19 * * 1-5"
   workflow_dispatch:
     inputs:
       session:
@@ -46,11 +46,11 @@ jobs:
 
           if [ -n "$INPUT" ]; then
             echo "name=$INPUT" >> $GITHUB_OUTPUT
-          elif [ "$HOUR" = "13" ]; then
+          elif [ "$HOUR" = "10" ]; then
             echo "name=PRE-MARKET" >> $GITHUB_OUTPUT
-          elif [ "$HOUR" = "14" ]; then
+          elif [ "$HOUR" = "11" ]; then
             echo "name=APERTURA" >> $GITHUB_OUTPUT
-          elif [ "$HOUR" = "19" ]; then
+          elif [ "$HOUR" = "16" ]; then
             echo "name=CIERRE" >> $GITHUB_OUTPUT
           else
             echo "name=MANUAL" >> $GITHUB_OUTPUT
