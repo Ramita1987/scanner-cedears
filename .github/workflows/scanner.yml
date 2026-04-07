@@ -14,7 +14,7 @@ on:
       session:
         description: "Sesion del scanner"
         required: true
-        default: "MANUAL"
+        default: "BOT"
         type: choice
         options:
           - MANUAL
