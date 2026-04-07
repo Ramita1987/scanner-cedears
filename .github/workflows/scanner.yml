@@ -2,19 +2,15 @@ name: Scanner CEDEARs Automatico
 
 on:
   schedule:
-    # UTC (Argentina UTC-3)
-    # 10:00 ARG = 13:00 UTC
-    - cron: "0 13 * * 1-5"
-    # 11:15 ARG = 14:15 UTC
-    - cron: "15 13 * * 1-5"
-    # 16:45 ARG = 19:45 UTC
-    - cron: "45 19 * * 1-5"
+    - cron: "0 13 * * 1-5"   # 10:00 ARG
+    - cron: "15 14 * * 1-5"  # 11:15 ARG
+    - cron: "45 19 * * 1-5"  # 16:45 ARG
   workflow_dispatch:
     inputs:
       session:
         description: "Sesion del scanner"
         required: true
-        default: "BOT"
+        default: "MANUAL"
         type: choice
         options:
           - MANUAL
@@ -42,15 +38,15 @@ jobs:
         id: session
         run: |
           HOUR=$(date -u +%H)
+          MIN=$(date -u +%M)
           INPUT="${{ github.event.inputs.session }}"
-
           if [ -n "$INPUT" ]; then
             echo "name=$INPUT" >> $GITHUB_OUTPUT
-          elif [ "$HOUR" = "10" ]; then
+          elif [ "$HOUR" = "13" ]; then
             echo "name=PRE-MARKET" >> $GITHUB_OUTPUT
-          elif [ "$HOUR" = "11" ]; then
+          elif [ "$HOUR" = "14" ]; then
             echo "name=APERTURA" >> $GITHUB_OUTPUT
-          elif [ "$HOUR" = "16" ]; then
+          elif [ "$HOUR" = "19" ]; then
             echo "name=CIERRE" >> $GITHUB_OUTPUT
           else
             echo "name=MANUAL" >> $GITHUB_OUTPUT
