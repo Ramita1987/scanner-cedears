@@ -4,7 +4,7 @@ on:
   schedule:
     - cron: "0 13 * * 1-5"   # 10:00 ARG
     - cron: "15 14 * * 1-5"  # 11:15 ARG
-    - cron: "45 19 * * 1-5"  # 16:45 ARG
+    - cron: "45 16 * * 1-5"  # 16:45 ARG
   workflow_dispatch:
     inputs:
       session:
