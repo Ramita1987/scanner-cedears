@@ -34,26 +34,23 @@ jobs:
       - name: Instalar dependencias
         run: pip install yfinance pandas numpy requests openpyxl
 
-      - name: Determinar sesion
-        id: session
-        run: |
-          HOUR=$(date -u +%H)
-          INPUT="${{ github.event.inputs.session }}"
-          if [ -n "$INPUT" ]; then
-            echo "name=$INPUT" >> $GITHUB_OUTPUT
-          elif [ "$HOUR" = "13" ]; then
-            echo "name=PRE-MARKET" >> $GITHUB_OUTPUT
-          elif [ "$HOUR" = "14" ]; then
-            echo "name=APERTURA" >> $GITHUB_OUTPUT
-          elif [ "$HOUR" = "19" ]; then
-            echo "name=CIERRE" >> $GITHUB_OUTPUT
-          else
-            echo "name=MANUAL" >> $GITHUB_OUTPUT
-          fi
-
       - name: Correr scanner
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          SESSION_NAME: ${{ steps.session.outputs.name }}
-        run: python run_scanner_ci.py
+        run: |
+          HOUR=$(date -u +%H)
+          INPUT="${{ github.event.inputs.session }}"
+          if [ -n "$INPUT" ]; then
+            export SESSION_NAME="$INPUT"
+          elif [ "$HOUR" = "13" ]; then
+            export SESSION_NAME="PRE-MARKET"
+          elif [ "$HOUR" = "14" ]; then
+            export SESSION_NAME="APERTURA"
+          elif [ "$HOUR" = "19" ]; then
+            export SESSION_NAME="CIERRE"
+          else
+            export SESSION_NAME="MANUAL"
+          fi
+          echo "Corriendo sesion: $SESSION_NAME"
+          python run_scanner_ci.py
