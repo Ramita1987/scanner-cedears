@@ -38,6 +38,8 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GOOGLE_SHEETS_WEBHOOK_URL: ${{ secrets.GOOGLE_SHEETS_WEBHOOK_URL }}
+          FMP_KEY: ${{ secrets.FMP_KEY }}
         run: |
           HOUR=$(date -u +%H)
           INPUT="${{ github.event.inputs.session }}"
