@@ -75,6 +75,21 @@ if top:
 else:
     print("Sin oportunidades con probabilidad > 60%")
 
+# Guardar historial completo (no solo top) en Excel/Sheets
+if resultados:
+    try:
+        st = sc.guardar_excel(resultados, SESSION_NAME)
+        print(
+            "\nHistorial -> Excel: {0} ({1}) | Sheets: {2} ({3})".format(
+                "OK" if st.get("excel_ok") else "ERROR",
+                st.get("excel_reason", ""),
+                "OK" if st.get("sheets_ok") else "ERROR",
+                st.get("sheets_reason", ""),
+            )
+        )
+    except Exception as e:
+        print(f"\nERROR guardando historial: {e}")
+
 msg = sc.build_telegram_message(top, SESSION_NAME)
 
 if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
