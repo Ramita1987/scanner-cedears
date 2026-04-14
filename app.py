@@ -709,7 +709,12 @@ def run_scanner_thread(session: str, params: dict = None, active_setups: list = 
         top = resultados[:tn]
         scanner_state["results"]  = top
         scanner_state["last_run"] = datetime.now().strftime("%d/%m/%Y %H:%M")
-        excel_status = {"excel_ok": False, "excel_reason": "sin señales", "sheets_ok": False, "sheets_reason": "sin señales"}
+        excel_status = {
+            "excel_ok": None,
+            "excel_reason": "sin señales",
+            "sheets_ok": None,
+            "sheets_reason": "sin señales",
+        }
         # Guardar historial completo (no solo top), para que Sheets quede "completo".
         if resultados:
             excel_status = sc.guardar_excel(resultados, session)
@@ -717,11 +722,15 @@ def run_scanner_thread(session: str, params: dict = None, active_setups: list = 
         scanner_state["log"].append(
             f"📣 Telegram: {'OK' if tg_status.get('ok') else 'ERROR'} — {tg_status.get('reason','')}"
         )
+        excel_flag = excel_status.get("excel_ok")
+        sheets_flag = excel_status.get("sheets_ok")
+        excel_lbl = "SKIP" if excel_flag is None else ("OK" if excel_flag else "ERROR")
+        sheets_lbl = "SKIP" if sheets_flag is None else ("OK" if sheets_flag else "ERROR")
         scanner_state["log"].append(
-            f"🗂️ Excel: {'OK' if excel_status.get('excel_ok') else 'ERROR'} — {excel_status.get('excel_reason','')}"
+            f"🗂️ Excel: {excel_lbl} — {excel_status.get('excel_reason','')}"
         )
         scanner_state["log"].append(
-            f"🟩 Sheets: {'OK' if excel_status.get('sheets_ok') else 'ERROR'} — {excel_status.get('sheets_reason','')}"
+            f"🟩 Sheets: {sheets_lbl} — {excel_status.get('sheets_reason','')}"
         )
         scanner_state["log"].append(f"\n🏁 Completado. {len(top)} oportunidades.")
     except Exception as e:
