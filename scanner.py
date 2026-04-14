@@ -16,6 +16,7 @@ import requests
 import sys
 import os
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 # ── Importar configuración ──────────────────────────────────────
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -93,7 +94,8 @@ def _data912_daily_ohlc(ticker: str) -> Optional[pd.DataFrame]:
     t = (ticker or "").strip().upper()
     if not t:
         return None
-    try_paths = [f"cedears/{t}", f"stocks/{t}"]
+    # Precios USA: evitar mezclar valores CEDEAR (AR) en el scanner.
+    try_paths = [f"stocks/{t}"]
     for p in try_paths:
         try:
             url = f"https://data912.com/historical/{p}"
@@ -574,15 +576,21 @@ def prob_emoji(p: float) -> str:
     return "🔥" if p >= 80 else "✅" if p >= 70 else "🟡"
 
 
+ARG_TZ = ZoneInfo("America/Argentina/Buenos_Aires")
+NY_TZ = ZoneInfo("America/New_York")
+
+
 def build_telegram_message(oportunidades: list, session_name: str) -> str:
-    hora  = datetime.now().strftime("%H:%M")
-    fecha = datetime.now().strftime("%d/%m/%Y")
+    now_arg = datetime.now(ARG_TZ)
+    now_ny = now_arg.astimezone(NY_TZ)
+    hora = now_arg.strftime("%H:%M")
+    fecha = now_arg.strftime("%d/%m/%Y")
     emojis = {"PRE-MARKET": "🌅", "APERTURA": "🔔", "CIERRE": "🌙", "MANUAL": "🔍"}
     emoji  = emojis.get(session_name, "🔍")
 
     header = (
-        f"{emoji} *SCANNER CEDEARS — {session_name}*\n"
-        f"📅 {fecha}  🕐 {hora} (ARG)\n"
+        f"{emoji} *SCANNER USA — {session_name}*\n"
+        f"📅 {fecha}  🕐 {hora} (ARG) | {now_ny.strftime('%H:%M')} (NY)\n"
         f"{'─' * 32}\n\n"
     )
 
