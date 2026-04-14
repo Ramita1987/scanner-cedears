@@ -115,6 +115,7 @@ def symbol_candidates(symbol: str) -> list:
 # ── API Keys ─────────────────────────────────────────────────────
 AV_KEY  = os.environ.get("AV_KEY",  "6IFZV2E8RQ6BMJ0L")   # Alpha Vantage
 FMP_KEY = os.environ.get("FMP_KEY", "aiQvIiYs0bc5eOheSFHH2c4kmi4lRVhr")                 # Financial Modeling Prep (free)
+GOOGLE_SHEETS_WEBHOOK_URL = os.environ.get("GOOGLE_SHEETS_WEBHOOK_URL", "").strip()
 
 # ── Cache global ─────────────────────────────────────────────────
 _cache = {}
@@ -733,29 +734,87 @@ def run_scanner_thread(session: str, params: dict = None, active_setups: list = 
 #  HISTORIAL
 # ═══════════════════════════════════════════════════════════════
 
-def get_historial():
+def _normalize_hist_row(row: dict) -> dict:
+    r = row if isinstance(row, dict) else {}
+    return {
+        "fecha": r.get("fecha", ""),
+        "hora": r.get("hora", ""),
+        "sesion": r.get("sesion", ""),
+        "ticker": r.get("ticker", ""),
+        "setup": r.get("setup", ""),
+        "confluencias": r.get("confluencias", ""),
+        "probabilidad": r.get("probabilidad", ""),
+        "precio": r.get("precio", ""),
+        "target": r.get("target", ""),
+        "stop": r.get("stop", ""),
+        "rsi": r.get("rsi", ""),
+        "vol_rel": r.get("vol_rel", ""),
+        "atr": r.get("atr", ""),
+        "descripcion": r.get("descripcion", ""),
+        "resultado": r.get("resultado", "Pendiente"),
+    }
+
+
+def _historial_from_sheets(limit: int = 400) -> list:
+    """
+    Lee historial desde Apps Script (persistente).
+    Requiere que doGet soporte: ?action=historial&limit=N
+    """
+    if not GOOGLE_SHEETS_WEBHOOK_URL or "script.google.com/macros/" not in GOOGLE_SHEETS_WEBHOOK_URL:
+        return []
+    try:
+        sep = "&" if "?" in GOOGLE_SHEETS_WEBHOOK_URL else "?"
+        url = f"{GOOGLE_SHEETS_WEBHOOK_URL}{sep}action=historial&limit={int(limit)}"
+        r = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code != 200:
+            return []
+        payload = r.json()
+        if isinstance(payload, list):
+            rows = payload
+        elif isinstance(payload, dict):
+            rows = payload.get("rows", []) or payload.get("data", [])
+        else:
+            rows = []
+        if not isinstance(rows, list):
+            return []
+        out = [_normalize_hist_row(x) for x in rows if isinstance(x, dict)]
+        return list(reversed(out)) if out else []
+    except Exception:
+        return []
+
+
+def _historial_from_local_excel() -> list:
     try:
         from openpyxl import load_workbook
         archivo = os.environ.get(
             "REGISTROS_PATH",
             os.path.join(os.path.dirname(os.path.abspath(__file__)), "registros_scanner.xlsx"),
         ).strip()
-        if not os.path.exists(archivo): return []
-        wb = load_workbook(archivo); ws = wb.active
+        if not os.path.exists(archivo):
+            return []
+        wb = load_workbook(archivo)
+        ws = wb.active
         rows = []
         for row in ws.iter_rows(min_row=2, values_only=True):
             if row[0]:
                 rows.append({
-                    "fecha":row[0],"hora":row[1],"sesion":row[2],"ticker":row[3],
-                    "setup":row[4],"confluencias":row[5],"probabilidad":row[6],
-                    "precio":row[7],"target":row[8],"stop":row[9],
-                    "rsi":row[10],"vol_rel":row[11],"atr":row[12],
-                    "descripcion":row[13],
-                    "resultado":row[14] if len(row)>14 else "Pendiente",
+                    "fecha": row[0], "hora": row[1], "sesion": row[2], "ticker": row[3],
+                    "setup": row[4], "confluencias": row[5], "probabilidad": row[6],
+                    "precio": row[7], "target": row[8], "stop": row[9],
+                    "rsi": row[10], "vol_rel": row[11], "atr": row[12],
+                    "descripcion": row[13],
+                    "resultado": row[14] if len(row) > 14 else "Pendiente",
                 })
         return list(reversed(rows))
     except Exception:
         return []
+
+
+def get_historial():
+    rows = _historial_from_sheets(limit=500)
+    if rows:
+        return rows
+    return _historial_from_local_excel()
 
 
 # ═══════════════════════════════════════════════════════════════
