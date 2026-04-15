@@ -745,22 +745,41 @@ def run_scanner_thread(session: str, params: dict = None, active_setups: list = 
 
 def _normalize_hist_row(row: dict) -> dict:
     r = row if isinstance(row, dict) else {}
+    norm = {}
+    for k, v in r.items():
+        kk = str(k).strip().lower()
+        norm[kk] = v
+        norm[kk.replace(" ", "_")] = v
+
+    def pick(*keys, default=""):
+        for key in keys:
+            k = str(key).strip().lower()
+            if k in norm and norm[k] not in (None, ""):
+                return norm[k]
+            k2 = k.replace(" ", "_")
+            if k2 in norm and norm[k2] not in (None, ""):
+                return norm[k2]
+        return default
+
     return {
-        "fecha": r.get("fecha", ""),
-        "hora": r.get("hora", ""),
-        "sesion": r.get("sesion", ""),
-        "ticker": r.get("ticker", ""),
-        "setup": r.get("setup", ""),
-        "confluencias": r.get("confluencias", ""),
-        "probabilidad": r.get("probabilidad", ""),
-        "precio": r.get("precio", ""),
-        "target": r.get("target", ""),
-        "stop": r.get("stop", ""),
-        "rsi": r.get("rsi", ""),
-        "vol_rel": r.get("vol_rel", ""),
-        "atr": r.get("atr", ""),
-        "descripcion": r.get("descripcion", ""),
-        "resultado": r.get("resultado", "Pendiente"),
+        "fecha": pick("fecha"),
+        "hora": pick("hora"),
+        "sesion": pick("sesion", "sesión"),
+        "ticker": pick("ticker"),
+        "setup": pick("setup"),
+        "confluencias": pick("confluencias"),
+        "probabilidad": pick("probabilidad", "prob"),
+        "precio": pick("precio", "entrada"),
+        "target": pick("target"),
+        "stop": pick("stop"),
+        "rsi": pick("rsi"),
+        "vol_rel": pick("vol_rel", "vol", "volrel"),
+        "atr": pick("atr"),
+        "descripcion": pick("descripcion", "descripción"),
+        "resultado": pick("resultado", default="Pendiente"),
+        "precio_hoy": pick("precio_hoy", "precio hoy"),
+        "variacion": pick("variacion", "variación"),
+        "que_hacer": pick("que_hacer", "que hacer", "qué_hacer", "qué hacer"),
     }
 
 
@@ -813,6 +832,9 @@ def _historial_from_local_excel() -> list:
                     "rsi": row[10], "vol_rel": row[11], "atr": row[12],
                     "descripcion": row[13],
                     "resultado": row[14] if len(row) > 14 else "Pendiente",
+                    "precio_hoy": row[15] if len(row) > 15 else "",
+                    "variacion": row[16] if len(row) > 16 else "",
+                    "que_hacer": row[17] if len(row) > 17 else "",
                 })
         return list(reversed(rows))
     except Exception:
