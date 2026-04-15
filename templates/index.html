@@ -399,10 +399,10 @@ tr:hover td{background:var(--bg3)}
         <div class="htable" id="htable">
           <table>
             <thead><tr>
-              <th>Fecha</th><th>Hora</th><th>Sesión</th><th>Ticker</th><th>Setup</th>
-              <th>Conf</th><th>Prob%</th><th>Entrada</th>
-              <th>Target +10%</th><th>Stop -5%</th>
-              <th>RSI</th><th>Vol</th><th>Resultado</th>
+              <th>Fecha</th><th>Sesión</th><th>Ticker</th><th>Setup</th>
+              <th>Prob%</th><th>Entrada</th><th>Target +10%</th><th>Stop -5%</th>
+              <th>RSI</th><th>Descripción</th><th>Resultado</th>
+              <th>Precio Hoy</th><th>Variación</th><th>Qué hacer</th>
             </tr></thead>
             <tbody id="hbody"></tbody>
           </table>
@@ -736,20 +736,43 @@ function renderCards(rs){
 async function loadHist(){
   const res=await fetch('/historial');const rows=await res.json();
   const b=document.getElementById('hbody');b.innerHTML='';
-  if(!rows.length){b.innerHTML='<tr><td colspan="13" style="color:var(--text3);text-align:center;padding:14px">Sin registros aún</td></tr>';return;}
+  if(!rows.length){b.innerHTML='<tr><td colspan="14" style="color:var(--text3);text-align:center;padding:14px">Sin registros aún</td></tr>';return;}
   const bc=s=>{if(!s)return'';const m=s.toUpperCase();return m.includes('PRE')?'bpre':m.includes('APER')?'baper':m.includes('CIER')?'bcier':'bman';};
   const rc=r=>{if(!r||r==='Pendiente')return'res-pend';return r.toLowerCase().includes('win')||r.toLowerCase().includes('target')?'res-win':'res-loss';};
+  const money=v=>{
+    if(v===undefined||v===null||v==='')return '—';
+    const n=Number(String(v).replace(',','.'));
+    if(Number.isFinite(n)) return `$${n.toLocaleString('es-AR',{maximumFractionDigits:2})}`;
+    return String(v).includes('$') ? String(v) : `$${v}`;
+  };
+  const pct=v=>{
+    if(v===undefined||v===null||v==='') return {txt:'—',cls:'flat'};
+    const s=String(v).trim();
+    if(s.includes('%')){
+      const n=Number(s.replace('%','').replace(',','.'));
+      return {txt:s,cls:Number.isFinite(n)?cc(n):'flat'};
+    }
+    const n=Number(s.replace(',','.'));
+    if(Number.isFinite(n)) return {txt:`${n.toFixed(2)}%`,cls:cc(n)};
+    return {txt:s,cls:'flat'};
+  };
   rows.forEach(r=>{
+    const varInfo=pct(r.variacion);
     b.innerHTML+=`<tr>
-      <td>${r.fecha}</td><td>${r.hora}</td>
+      <td>${r.fecha||'—'}</td>
       <td><span class="badge ${bc(r.sesion)}">${r.sesion||'—'}</span></td>
-      <td><strong>${r.ticker}</strong></td><td>${r.setup}</td>
-      <td>${r.confluencias}/5</td><td>${r.probabilidad}%</td>
-      <td>$${(r.precio||0).toLocaleString()}</td>
-      <td class="target-cell">$${(r.target||0).toLocaleString()}</td>
-      <td class="stop-cell">$${(r.stop||0).toLocaleString()}</td>
-      <td>${r.rsi}</td><td>${r.vol_rel}x</td>
+      <td><strong>${r.ticker||'—'}</strong></td>
+      <td>${r.setup||'—'}</td>
+      <td>${r.probabilidad!==undefined&&r.probabilidad!==''?`${r.probabilidad}%`:'—'}</td>
+      <td>${money(r.precio)}</td>
+      <td class="target-cell">${money(r.target)}</td>
+      <td class="stop-cell">${money(r.stop)}</td>
+      <td>${r.rsi!==undefined&&r.rsi!==''?r.rsi:'—'}</td>
+      <td style="max-width:280px;white-space:normal;font-family:var(--font-h);font-size:.68rem;color:var(--text2)">${r.descripcion||'—'}</td>
       <td class="${rc(r.resultado)}">${r.resultado||'Pendiente'}</td>
+      <td>${money(r.precio_hoy)}</td>
+      <td class="${varInfo.cls}">${varInfo.txt}</td>
+      <td>${r.que_hacer||'—'}</td>
     </tr>`;
   });
 }
