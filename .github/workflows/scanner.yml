@@ -5,8 +5,8 @@ on:
     # Horarios fijos (UTC):
     # PRE-MARKET: 10:15 ARG = 13:15 UTC
     - cron: "15 13 * * 1-5"
-    # APERTURA: 11:15 ARG = 14:15 UTC
-    - cron: "15 14 * * 1-5"
+    # APERTURA: 11:00 ARG = 14:00 UTC
+    - cron: "0 14 * * 1-5"
     # CIERRE: 16:45 ARG = 19:45 UTC
     - cron: "45 19 * * 1-5"
   workflow_dispatch:
@@ -50,7 +50,7 @@ jobs:
           elif [ "$EVENT_NAME" = "schedule" ]; then
             if [ "$CRON_EXPR" = "15 13 * * 1-5" ]; then
               echo "name=PRE-MARKET" >> $GITHUB_OUTPUT
-            elif [ "$CRON_EXPR" = "15 14 * * 1-5" ]; then
+            elif [ "$CRON_EXPR" = "0 14 * * 1-5" ]; then
               echo "name=APERTURA" >> $GITHUB_OUTPUT
             elif [ "$CRON_EXPR" = "45 19 * * 1-5" ]; then
               echo "name=CIERRE" >> $GITHUB_OUTPUT
