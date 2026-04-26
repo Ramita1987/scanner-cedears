@@ -727,6 +727,19 @@ def _send_google_sheets_rows(rows: list) -> dict:
         return {"ok": False, "reason": str(e)}
 
 
+def _is_closed_status(text: str) -> bool:
+    t = str(text or "").strip().lower()
+    if not t:
+        return False
+    return (
+        "cerrado" in t
+        or "profit" in t
+        or "stop" in t
+        or "win" in t
+        or "loss" in t
+    )
+
+
 def guardar_excel(oportunidades: list, session_name: str):
     """Guarda las oportunidades en un Excel acumulativo."""
     status = {"excel_ok": False, "excel_reason": "", "sheets_ok": False, "sheets_reason": ""}
@@ -735,8 +748,9 @@ def guardar_excel(oportunidades: list, session_name: str):
         from openpyxl.styles import Font, PatternFill
 
         archivo = REGISTROS_PATH
-        fecha   = datetime.now().strftime("%d/%m/%Y")
-        hora    = datetime.now().strftime("%H:%M")
+        now_arg = datetime.now(ARG_TZ)
+        fecha = now_arg.strftime("%d/%m/%Y")
+        hora = now_arg.strftime("%H:%M")
 
         if os.path.exists(archivo):
             wb = load_workbook(archivo)
@@ -756,18 +770,37 @@ def guardar_excel(oportunidades: list, session_name: str):
                 cell.font = Font(bold=True, color="FFFFFF")
                 cell.fill = PatternFill("solid", fgColor="1F4E79")
 
+        # Evita duplicados de señales abiertas (mismo ticker + setup).
+        open_pairs = set()
+        for ridx in range(2, ws.max_row + 1):
+            tk = ws.cell(ridx, 4).value
+            st = ws.cell(ridx, 5).value
+            rs = ws.cell(ridx, 15).value
+            if not tk or not st:
+                continue
+            key = (str(tk).strip().upper(), str(st).strip().lower())
+            if key[0] and key[1] and not _is_closed_status(rs):
+                open_pairs.add(key)
+
         gs_rows = []
+        skipped_duplicates = 0
         for op in oportunidades:
+            key = (str(op.get("ticker", "")).strip().upper(), str(op.get("setup", "")).strip().lower())
+            if key in open_pairs:
+                skipped_duplicates += 1
+                continue
+
             precio  = op["precio"]
             target  = round(precio * 1.10, 2)
             stop    = round(precio * 0.95, 2)
+            resultado_inicial = "ABIERTO"
             ws.append([
                 fecha, hora, session_name,
                 op["ticker"], op["setup"],
                 op["confluencias"], op["probabilidad"],
                 precio, target, stop,
                 op["rsi"], op["vol_rel"], op["atr"],
-                op["descripcion"], "Pendiente"
+                op["descripcion"], resultado_inicial
             ])
             gs_rows.append({
                 "fecha": fecha,
@@ -784,15 +817,23 @@ def guardar_excel(oportunidades: list, session_name: str):
                 "vol_rel": op["vol_rel"],
                 "atr": op["atr"],
                 "descripcion": op["descripcion"],
-                "resultado": "Pendiente",
+                "resultado": resultado_inicial,
+                "precio_hoy": precio,
+                "variacion": 0.0,
+                "que_hacer": "🖐 Mantener",
             })
+            open_pairs.add(key)
 
         wb.save(archivo)
         status["excel_ok"] = True
-        status["excel_reason"] = archivo
-        gs_status = _send_google_sheets_rows(gs_rows)
-        status["sheets_ok"] = bool(gs_status.get("ok"))
-        status["sheets_reason"] = gs_status.get("reason", "")
+        status["excel_reason"] = f"{archivo} | duplicadas omitidas: {skipped_duplicates}"
+        if gs_rows:
+            gs_status = _send_google_sheets_rows(gs_rows)
+            status["sheets_ok"] = bool(gs_status.get("ok"))
+            status["sheets_reason"] = gs_status.get("reason", "")
+        else:
+            status["sheets_ok"] = True
+            status["sheets_reason"] = "sin nuevas señales (duplicadas abiertas)"
         log.info(f"✅ Excel actualizado: {archivo}")
 
     except Exception as e:
