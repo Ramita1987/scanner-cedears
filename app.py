@@ -1019,17 +1019,80 @@ def _enrich_historial_rows(rows: list) -> tuple:
     return enriched, updates
 
 
+def _blankish(v) -> bool:
+    s = str(v if v is not None else "").strip()
+    return s in ("", "-", "—", "null", "None", "nan")
+
+
+def _row_has_real_signal_data(r: dict) -> bool:
+    if not isinstance(r, dict):
+        return False
+    # Señales "buenas": tienen sesión y/o datos técnicos/económicos base.
+    must = ["sesion", "probabilidad", "precio", "target", "stop", "rsi", "descripcion"]
+    return any(not _blankish(r.get(k, "")) for k in must)
+
+
+def _hist_sort_key(r: dict):
+    if not isinstance(r, dict):
+        return datetime.min
+    fecha = str(r.get("fecha", "") or "").strip()
+    hora = str(r.get("hora", "") or "").strip()
+    for fmt in ("%d/%m/%Y %H:%M", "%d/%m/%Y", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            if " " in fmt:
+                raw = f"{fecha} {hora or '00:00'}".strip()
+            else:
+                raw = fecha
+            return datetime.strptime(raw, fmt)
+        except Exception:
+            continue
+    return datetime.min
+
+
+def _cleanup_historial_rows(rows: list) -> list:
+    """
+    Quita filas legacy incompletas y deduplica basura repetida.
+    """
+    if not rows:
+        return []
+
+    cleaned = []
+    seen = set()
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        # Ocultar filas viejas/incompletas (como las de arriba en azul).
+        if not _row_has_real_signal_data(r):
+            continue
+
+        key = (
+            str(r.get("fecha", "")).strip(),
+            str(r.get("hora", "")).strip(),
+            str(r.get("ticker", "")).strip().upper(),
+            str(r.get("setup", "")).strip().lower(),
+            str(r.get("resultado", "")).strip().lower(),
+            str(r.get("precio_hoy", "")).strip(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(r)
+
+    cleaned.sort(key=_hist_sort_key, reverse=True)
+    return cleaned
+
+
 def get_historial():
     rows = _historial_from_sheets(limit=500)
     if rows:
         enriched, updates = _enrich_historial_rows(rows)
         if updates:
             _persist_historial_updates(updates)
-        return enriched
+        return _cleanup_historial_rows(enriched)
 
     rows = _historial_from_local_excel()
     enriched, _ = _enrich_historial_rows(rows)
-    return enriched
+    return _cleanup_historial_rows(enriched)
 
 
 # ═══════════════════════════════════════════════════════════════
