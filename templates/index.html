@@ -24,7 +24,7 @@ nav{position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(6,10,15,.96)
 .nav-logo .acc{color:var(--green)}
 .dot{width:7px;height:7px;background:var(--green);border-radius:50%;animation:pulse 2s infinite;flex-shrink:0}
 @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.7)}}
-.nav-center{flex:1;display:flex;justify-content:center}
+.nav-center{flex:1;display:flex;justify-content:center;min-width:0}
 .nav-links{display:flex;gap:6px;list-style:none}
 .nav-links a{display:block;padding:10px 22px;font-size:.95rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--text2);text-decoration:none;border-radius:8px;transition:all .2s;cursor:pointer;border:1px solid transparent}
 .nav-links a:hover{color:var(--text);background:var(--bg3);border-color:var(--border)}
@@ -243,8 +243,16 @@ tr:hover td{background:var(--bg3)}
   .usd-row{grid-template-columns:repeat(2,minmax(150px,1fr))}
 }
 @media(max-width:768px){
-  nav{padding:0 12px}
-  .nav-links a{padding:8px 12px;font-size:.8rem}
+  nav{padding:0 8px;height:62px}
+  .page{padding-top:62px}
+  .nav-logo{font-size:.8rem;gap:6px}
+  .nav-center{overflow-x:auto;justify-content:flex-start;-ms-overflow-style:none;scrollbar-width:none}
+  .nav-center::-webkit-scrollbar{display:none}
+  .nav-links{min-width:max-content;gap:4px;padding-right:6px}
+  .nav-links a{padding:8px 10px;font-size:.72rem;border-radius:7px}
+  .hero{padding:16px 12px 10px}
+  .hero-title{font-size:1.1rem;line-height:1.2}
+  .hero-sub{font-size:.54rem}
   .inicio-grid{
     grid-template-columns:1fr;
     grid-template-areas:
@@ -253,10 +261,69 @@ tr:hover td{background:var(--bg3)}
       "news"
       "top";
   }
+  .icol{padding:12px 10px}
   .usd-row{grid-template-columns:1fr}
+  .usd-card{padding:7px 9px}
+  .col-title{font-size:.54rem}
+  .mname,.mprice{font-size:.78rem}
+
   .scan-layout{grid-template-columns:1fr}
-  .sec-layout{padding:14px}
-  .watch-grid{grid-template-columns:1fr 1fr}
+  .scan-main{order:1;padding:12px}
+  .scan-side{order:2;padding:12px}
+  .res-hdr{margin-bottom:8px}
+  .cards{grid-template-columns:1fr}
+  .rdata{grid-template-columns:repeat(2,1fr)}
+  .watch-grid{grid-template-columns:1fr}
+  .wcard{padding:11px}
+  .wcard-ticker{font-size:.94rem}
+
+  .hist-wrap{margin-top:14px}
+  .hist-head{padding:10px 12px}
+  .hist-head h4{font-size:.56rem}
+  .htable{overflow-x:visible}
+  .htable table,
+  .htable thead,
+  .htable tbody,
+  .htable tr,
+  .htable td{display:block;width:100%}
+  .htable thead{display:none}
+  .htable tr{
+    border-top:1px solid var(--border);
+    padding:8px 10px;
+    background:var(--bg2);
+  }
+  .htable tr:first-child{border-top:none}
+  .htable td{
+    border-top:none;
+    padding:4px 0;
+    white-space:normal;
+    font-size:.68rem;
+    display:flex;
+    justify-content:space-between;
+    gap:8px;
+    align-items:flex-start;
+  }
+  .htable td::before{
+    content:attr(data-label);
+    flex:0 0 42%;
+    max-width:42%;
+    color:var(--text3);
+    font-family:var(--font-h);
+    font-size:.58rem;
+    font-weight:700;
+    letter-spacing:.05em;
+    text-transform:uppercase;
+  }
+  .htable td strong{font-size:.78rem}
+  .badge{font-size:.56rem}
+
+  .sec-layout{padding:12px}
+  .sec-tabs{gap:4px;overflow-x:auto;flex-wrap:nowrap;padding-bottom:10px}
+  .sec-tabs::-webkit-scrollbar{display:none}
+  .stab{font-size:.66rem;padding:5px 9px;white-space:nowrap}
+  .sec-title{font-size:.84rem}
+  .chart-box{height:260px;padding:10px}
+  .sec-stocks{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
 }
 
 /* ── TUTORIAL ── */
@@ -763,20 +830,20 @@ async function loadHist(){
   rows.forEach(r=>{
     const varInfo=pct(r.variacion);
     b.innerHTML+=`<tr>
-      <td>${r.fecha||'—'}</td>
-      <td><span class="badge ${bc(r.sesion)}">${r.sesion||'—'}</span></td>
-      <td><strong>${r.ticker||'—'}</strong></td>
-      <td>${r.setup||'—'}</td>
-      <td>${r.probabilidad!==undefined&&r.probabilidad!==''?`${r.probabilidad}%`:'—'}</td>
-      <td>${money(r.precio)}</td>
-      <td class="target-cell">${money(r.target)}</td>
-      <td class="stop-cell">${money(r.stop)}</td>
-      <td>${r.rsi!==undefined&&r.rsi!==''?r.rsi:'—'}</td>
-      <td style="max-width:280px;white-space:normal;font-family:var(--font-h);font-size:.68rem;color:var(--text2)">${r.descripcion||'—'}</td>
-      <td class="${rc(r.resultado)}">${r.resultado||'Pendiente'}</td>
-      <td>${money(r.precio_hoy)}</td>
-      <td class="${varInfo.cls}">${varInfo.txt}</td>
-      <td>${r.que_hacer||'—'}</td>
+      <td data-label="Fecha">${r.fecha||'—'}</td>
+      <td data-label="Sesión"><span class="badge ${bc(r.sesion)}">${r.sesion||'—'}</span></td>
+      <td data-label="Ticker"><strong>${r.ticker||'—'}</strong></td>
+      <td data-label="Setup">${r.setup||'—'}</td>
+      <td data-label="Prob%">${r.probabilidad!==undefined&&r.probabilidad!==''?`${r.probabilidad}%`:'—'}</td>
+      <td data-label="Entrada">${money(r.precio)}</td>
+      <td data-label="Target +10%" class="target-cell">${money(r.target)}</td>
+      <td data-label="Stop -5%" class="stop-cell">${money(r.stop)}</td>
+      <td data-label="RSI">${r.rsi!==undefined&&r.rsi!==''?r.rsi:'—'}</td>
+      <td data-label="Descripción" style="max-width:280px;white-space:normal;font-family:var(--font-h);font-size:.68rem;color:var(--text2)">${r.descripcion||'—'}</td>
+      <td data-label="Resultado" class="${rc(r.resultado)}">${r.resultado||'Pendiente'}</td>
+      <td data-label="Precio Hoy">${money(r.precio_hoy)}</td>
+      <td data-label="Variación" class="${varInfo.cls}">${varInfo.txt}</td>
+      <td data-label="Qué hacer">${r.que_hacer||'—'}</td>
     </tr>`;
   });
 }
