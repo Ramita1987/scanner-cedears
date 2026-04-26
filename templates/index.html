@@ -738,7 +738,11 @@ async function loadHist(){
   const b=document.getElementById('hbody');b.innerHTML='';
   if(!rows.length){b.innerHTML='<tr><td colspan="14" style="color:var(--text3);text-align:center;padding:14px">Sin registros aún</td></tr>';return;}
   const bc=s=>{if(!s)return'';const m=s.toUpperCase();return m.includes('PRE')?'bpre':m.includes('APER')?'baper':m.includes('CIER')?'bcier':'bman';};
-  const rc=r=>{if(!r||r==='Pendiente')return'res-pend';return r.toLowerCase().includes('win')||r.toLowerCase().includes('target')?'res-win':'res-loss';};
+  const rc=r=>{
+    const t=String(r||'').toLowerCase();
+    if(!t||t.includes('pend')||t.includes('abierto'))return'res-pend';
+    return (t.includes('win')||t.includes('target')||t.includes('profit'))?'res-win':'res-loss';
+  };
   const money=v=>{
     if(v===undefined||v===null||v==='')return '—';
     const n=Number(String(v).replace(',','.'));
