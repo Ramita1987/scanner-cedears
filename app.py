@@ -841,11 +841,195 @@ def _historial_from_local_excel() -> list:
         return []
 
 
+def _hist_float(v, default=None):
+    if v is None:
+        return default
+    if isinstance(v, (int, float)):
+        return float(v)
+    s = str(v).strip()
+    if not s:
+        return default
+    s = s.replace("$", "").replace("%", "").replace("x", "").replace(" ", "")
+    if "," in s and "." in s:
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif "," in s:
+        s = s.replace(",", ".")
+    try:
+        return float(s)
+    except Exception:
+        return default
+
+
+def _is_closed_result(text: str) -> bool:
+    t = (text or "").strip().lower()
+    if not t:
+        return False
+    return (
+        "cerrado" in t
+        or "profit" in t
+        or "stop" in t
+        or "win" in t
+        or "loss" in t
+    )
+
+
+def _historial_quote_map(tickers: list) -> dict:
+    syms = []
+    for t in tickers or []:
+        tt = (t or "").strip().upper()
+        if tt and tt not in syms:
+            syms.append(tt)
+    if not syms:
+        return {}
+
+    out = data912_quote_map(syms)
+
+    missing = [s for s in syms if s not in out or out[s].get("price") is None]
+    if missing:
+        fmp = fmp_quote_safe(missing)
+        for s in missing:
+            if s in out and out[s].get("price") is not None:
+                continue
+            q = fmp.get(s, {})
+            if q.get("price") is not None:
+                out[s] = q
+
+    missing = [s for s in syms if s not in out or out[s].get("price") is None]
+    if missing:
+        yq = yf_quote_bulk(missing)
+        for s in missing:
+            if s in out and out[s].get("price") is not None:
+                continue
+            q = yq.get(s, {})
+            if q.get("price") is not None:
+                out[s] = q
+
+    missing = [s for s in syms if s not in out or out[s].get("price") is None]
+    for s in missing:
+        q, _ = av_quote_first([s])
+        if q.get("price") is not None:
+            out[s] = q
+
+    return out
+
+
+def _persist_historial_updates(updates: list) -> bool:
+    if not updates:
+        return False
+    if not GOOGLE_SHEETS_WEBHOOK_URL or "script.google.com/macros/" not in GOOGLE_SHEETS_WEBHOOK_URL:
+        return False
+    try:
+        payload = {"action": "update_rows", "rows": updates}
+        r = requests.post(
+            GOOGLE_SHEETS_WEBHOOK_URL,
+            json=payload,
+            timeout=20,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        if r.status_code != 200:
+            return False
+        body = r.json() if r.text else {}
+        if isinstance(body, dict) and body.get("ok") is False:
+            return False
+        return True
+    except Exception:
+        return False
+
+
+def _enrich_historial_rows(rows: list) -> tuple:
+    if not rows:
+        return [], []
+
+    tickers = [str(r.get("ticker", "")).strip().upper() for r in rows if isinstance(r, dict)]
+    quotes = _historial_quote_map(tickers)
+    enriched = []
+    updates = []
+
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        x = dict(r)
+        ticker = str(x.get("ticker", "")).strip().upper()
+        price_now = _hist_float(x.get("precio_hoy"), default=None)
+        if price_now is None:
+            q = quotes.get(ticker, {})
+            price_now = _hist_float(q.get("price"), default=None)
+        entry = _hist_float(x.get("precio"), default=None)
+        target = _hist_float(x.get("target"), default=None)
+        stop = _hist_float(x.get("stop"), default=None)
+        var_pct = _hist_float(x.get("variacion"), default=None)
+        if var_pct is None and price_now is not None and entry not in (None, 0):
+            var_pct = (price_now - entry) / entry * 100.0
+
+        old_result = str(x.get("resultado", "") or "").strip()
+        old_qh = str(x.get("que_hacer", "") or "").strip()
+
+        if _is_closed_result(old_result):
+            new_result = old_result
+            new_qh = old_qh or "🔒 Cerrado"
+        else:
+            hit_profit = (
+                (target is not None and price_now is not None and price_now >= target)
+                or (var_pct is not None and var_pct >= 10.0)
+            )
+            hit_stop = (
+                (stop is not None and price_now is not None and price_now <= stop)
+                or (var_pct is not None and var_pct <= -5.0)
+            )
+            if hit_profit:
+                new_result = "CERRADO PROFIT"
+                new_qh = "🟢 Cerrar Profit"
+            elif hit_stop:
+                new_result = "CERRADO STOP LOSS"
+                new_qh = "🔴 Cerrar Stop Loss"
+            else:
+                new_result = old_result or "ABIERTO"
+                new_qh = old_qh or "🖐 Mantener"
+
+        x["precio_hoy"] = round(price_now, 2) if price_now is not None else (x.get("precio_hoy") or "")
+        x["variacion"] = round(var_pct, 2) if var_pct is not None else (x.get("variacion") or "")
+        x["que_hacer"] = new_qh
+        x["resultado"] = new_result
+
+        changed = (
+            str(old_result) != str(new_result)
+            or str(old_qh) != str(new_qh)
+            or str(r.get("precio_hoy", "")) != str(x.get("precio_hoy", ""))
+            or str(r.get("variacion", "")) != str(x.get("variacion", ""))
+        )
+        if changed:
+            updates.append(
+                {
+                    "fecha": x.get("fecha", ""),
+                    "hora": x.get("hora", ""),
+                    "ticker": x.get("ticker", ""),
+                    "setup": x.get("setup", ""),
+                    "resultado": x.get("resultado", ""),
+                    "precio_hoy": x.get("precio_hoy", ""),
+                    "variacion": x.get("variacion", ""),
+                    "que_hacer": x.get("que_hacer", ""),
+                }
+            )
+
+        enriched.append(x)
+
+    return enriched, updates
+
+
 def get_historial():
     rows = _historial_from_sheets(limit=500)
     if rows:
-        return rows
-    return _historial_from_local_excel()
+        enriched, updates = _enrich_historial_rows(rows)
+        if updates:
+            _persist_historial_updates(updates)
+        return enriched
+
+    rows = _historial_from_local_excel()
+    enriched, _ = _enrich_historial_rows(rows)
+    return enriched
 
 
 # ═══════════════════════════════════════════════════════════════
