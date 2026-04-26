@@ -38,6 +38,13 @@ jobs:
       - name: Instalar dependencias
         run: pip install yfinance pandas numpy requests openpyxl
 
+      - name: Debug horario
+        run: |
+          echo "UTC now: $(date -u '+%Y-%m-%d %H:%M:%S')"
+          TZ=America/Argentina/Buenos_Aires date '+ARG now: %Y-%m-%d %H:%M:%S'
+          echo "Evento: ${{ github.event_name }}"
+          echo "Cron recibido: '${{ github.event.schedule }}'"
+
       - name: Determinar sesion
         id: session
         run: |
@@ -55,7 +62,7 @@ jobs:
             elif [ "$CRON_EXPR" = "45 19 * * 1-5" ]; then
               echo "name=CIERRE" >> $GITHUB_OUTPUT
             else
-              echo "name=PRE-MARKET" >> $GITHUB_OUTPUT
+              echo "name=MANUAL" >> $GITHUB_OUTPUT
             fi
           else
             echo "name=MANUAL" >> $GITHUB_OUTPUT
