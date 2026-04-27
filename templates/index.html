@@ -228,6 +228,24 @@ tr:hover td{background:var(--bg3)}
 .ss-p{font-family:var(--font-m);font-size:.76rem;color:var(--text)}
 .ss-c{font-family:var(--font-m);font-size:.7rem;margin-top:2px}
 
+/* â”€â”€ RATIOS CEDAR â”€â”€ */
+.rat-layout{padding:26px 28px}
+.rat-hdr{display:flex;justify-content:space-between;align-items:flex-end;gap:10px;margin-bottom:18px}
+.rat-title{font-size:1.2rem;font-weight:800;letter-spacing:-.03em}
+.rat-sub{font-size:.76rem;color:var(--text2);margin-top:4px}
+.rat-btn{padding:8px 12px;border:1px solid var(--border2);border-radius:8px;background:var(--bg2);color:var(--text2);font-size:.72rem;font-weight:700;letter-spacing:.04em;cursor:pointer;transition:all .2s;font-family:var(--font-h)}
+.rat-btn:hover{border-color:var(--green);color:var(--text)}
+.rat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(460px,1fr));gap:12px}
+.rat-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px}
+.rat-card-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px}
+.rat-card-name{font-size:.86rem;font-weight:800}
+.rat-card-meta{font-size:.62rem;color:var(--text3);font-family:var(--font-m)}
+.rat-chart-wrap{height:230px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:10px;position:relative}
+.rat-chart-title{font-size:.58rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);margin-bottom:6px}
+.rat-chart-wrap canvas{height:180px!important}
+.rat-empty{padding:22px;border:1px dashed var(--border);border-radius:10px;color:var(--text3);text-align:center;font-size:.78rem;background:var(--bg2)}
+.rat-foot{font-size:.62rem;color:var(--text3);font-family:var(--font-m)}
+
 ::-webkit-scrollbar{width:5px;height:5px}
 ::-webkit-scrollbar-track{background:var(--bg)}
 ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
@@ -324,6 +342,18 @@ tr:hover td{background:var(--bg3)}
   .sec-title{font-size:.84rem}
   .chart-box{height:260px;padding:10px}
   .sec-stocks{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+
+  .rat-layout{padding:12px}
+  .rat-hdr{flex-direction:column;align-items:flex-start}
+  .rat-title{font-size:1rem}
+  .rat-sub{font-size:.7rem}
+  .rat-btn{width:100%;text-align:center}
+  .rat-grid{grid-template-columns:1fr;gap:10px}
+  .rat-card{padding:10px}
+  .rat-card-name{font-size:.8rem}
+  .rat-card-meta{font-size:.58rem}
+  .rat-chart-wrap{height:205px;padding:8px}
+  .rat-chart-wrap canvas{height:158px!important}
 }
 
 /* ── TUTORIAL ── */
@@ -360,6 +390,7 @@ tr:hover td{background:var(--bg3)}
       <li><a onclick="showPage('inicio')"   id="nav-inicio"   class="active">Inicio</a></li>
       <li><a onclick="showPage('scanner')"  id="nav-scanner">Scanner</a></li>
       <li><a onclick="showPage('sectores')" id="nav-sectores">Sectores</a></li>
+      <li><a onclick="showPage('ratios')"   id="nav-ratios">Ratios Cedear</a></li>
       <li><a onclick="showPage('tutorial')" id="nav-tutorial">Tutorial</a></li>
     </ul>
   </div>
@@ -506,6 +537,22 @@ tr:hover td{background:var(--bg3)}
   </div>
 </div>
 
+<!-- â•â•â•â•â•â• RATIOS CEDAR â•â•â•â•â•â• -->
+<div class="page" id="page-ratios">
+  <div class="rat-layout">
+    <div class="rat-hdr">
+      <div>
+        <div class="rat-title">Ratios Cedear</div>
+        <div class="rat-sub">Comparativo Ratio vs Media por hoja (histÃ³rico completo y Ãºltimos 30 dÃ­as).</div>
+      </div>
+      <button class="rat-btn" onclick="loadRatiosCedear(true)">↻ Recargar ratios</button>
+    </div>
+    <div id="ratios-grid" class="rat-grid">
+      <div class="rat-empty">Cargando datos de ratios...</div>
+    </div>
+  </div>
+</div>
+
 
 <!-- TUTORIAL -->
 <div class="page" id="page-tutorial">
@@ -567,6 +614,7 @@ function showPage(n){
   document.getElementById('page-'+n).classList.add('active');
   document.getElementById('nav-'+n).classList.add('active');
   if(n==='sectores'&&!secLoaded){loadSec2('tec');secLoaded=true;}
+  if(n==='ratios'&&!ratiosLoaded){loadRatiosCedear();ratiosLoaded=true;}
 }
 
 // ── Market (lazy load) ───────────────────────────────────
@@ -870,6 +918,7 @@ const SECS={
 };
 const LCOLS=['#00e676','#2979ff','#ffc400','#ff3d57','#c084fc','#00bcd4','#ff9800','#e91e63','#8bc34a','#9c27b0'];
 let secLoaded=false,curChart=null;
+let ratiosLoaded=false,ratioCharts=[];
 
 function showSec(k,btn){
   document.querySelectorAll('.stab').forEach(t=>t.classList.remove('active'));
@@ -1018,6 +1067,178 @@ function renderStocks(data,tickers){
 
 // ── Init ─────────────────────────────────────────────────
 // Carga diferida para acelerar la página
+// Ratios Cedear
+function parseRatioDate(v){
+  if(!v&&v!==0)return null;
+  const s=String(v).trim();
+  if(!s)return null;
+  const m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if(m){
+    const d=new Date(Number(m[3]),Number(m[2])-1,Number(m[1]));
+    return Number.isNaN(d.getTime())?null:d;
+  }
+  const d=new Date(s.replace(' ','T'));
+  return Number.isNaN(d.getTime())?null:d;
+}
+
+function fmtRatioDate(d){
+  if(!d)return '';
+  return d.toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'2-digit'});
+}
+
+function toRatioNum(v){
+  if(v===undefined||v===null||v==='')return null;
+  if(typeof v==='number')return Number.isFinite(v)?v:null;
+  const n=Number(String(v).replace(',','.'));
+  return Number.isFinite(n)?n:null;
+}
+
+function clearRatioCharts(){
+  ratioCharts.forEach(ch=>{try{ch.destroy();}catch{}});
+  ratioCharts=[];
+}
+
+function chartOptsRatio(){
+  return {
+    responsive:true,
+    maintainAspectRatio:false,
+    interaction:{mode:'index',intersect:false},
+    plugins:{
+      legend:{
+        position:'top',
+        labels:{color:'#7a9bb5',font:{size:10},boxWidth:12,padding:10}
+      },
+      tooltip:{
+        backgroundColor:'#0c1219',
+        borderColor:'#1e2d3d',
+        borderWidth:1,
+        titleColor:'#e8f0f8',
+        bodyColor:'#7a9bb5',
+      }
+    },
+    scales:{
+      x:{ticks:{color:'#3d5a73',font:{size:9},maxTicksLimit:8},grid:{color:'#1e2d3d'}},
+      y:{ticks:{color:'#3d5a73',font:{size:9}},grid:{color:'#1e2d3d'}}
+    }
+  };
+}
+
+function buildRatioChart(canvasId,labels,ratioData,mediaData){
+  const ctx=document.getElementById(canvasId).getContext('2d');
+  const datasets=[];
+  if(ratioData.some(v=>v!==null)){
+    datasets.push({
+      label:'Ratio',
+      data:ratioData,
+      borderColor:'#00e676',
+      backgroundColor:'transparent',
+      borderWidth:2,
+      pointRadius:0,
+      tension:0.25,
+      spanGaps:true,
+    });
+  }
+  if(mediaData.some(v=>v!==null)){
+    datasets.push({
+      label:'Media',
+      data:mediaData,
+      borderColor:'#2979ff',
+      backgroundColor:'transparent',
+      borderWidth:1.8,
+      pointRadius:0,
+      tension:0.25,
+      borderDash:[6,4],
+      spanGaps:true,
+    });
+  }
+  if(!datasets.length)return null;
+  return new Chart(ctx,{type:'line',data:{labels,datasets},options:chartOptsRatio()});
+}
+
+function normalizeRatioSeries(raw){
+  const rows=(raw||[]).map(r=>{
+    const dt=parseRatioDate(r.date||r.fecha||r.dia);
+    return {
+      d:dt,
+      ratio:toRatioNum(r.ratio),
+      media:toRatioNum(r.media),
+    };
+  }).filter(x=>x.d&&(x.ratio!==null||x.media!==null));
+  rows.sort((a,b)=>a.d-b.d);
+  return rows;
+}
+
+async function loadRatiosCedear(force=false){
+  const grid=document.getElementById('ratios-grid');
+  if(!grid)return;
+  grid.innerHTML='<div class="rat-empty">Cargando datos de ratios...</div>';
+  clearRatioCharts();
+
+  try{
+    const u=force?`/ratios_cedear_data?t=${Date.now()}`:'/ratios_cedear_data';
+    const res=await fetch(u);
+    if(!res.ok)throw new Error('HTTP '+res.status);
+    const payload=await res.json();
+    const sheets=Array.isArray(payload.sheets)?payload.sheets:[];
+    if(!sheets.length){
+      grid.innerHTML='<div class="rat-empty">No hay datos de ratios disponibles en este momento.</div>';
+      return;
+    }
+
+    grid.innerHTML='';
+    sheets.forEach((sheet,idx)=>{
+      const series=normalizeRatioSeries(sheet.series||sheet.rows||[]);
+      if(series.length<2)return;
+
+      const labelsAll=series.map(p=>fmtRatioDate(p.d));
+      const ratioAll=series.map(p=>p.ratio);
+      const mediaAll=series.map(p=>p.media);
+
+      const shortSeries=series.slice(-30);
+      const labels30=shortSeries.map(p=>fmtRatioDate(p.d));
+      const ratio30=shortSeries.map(p=>p.ratio);
+      const media30=shortSeries.map(p=>p.media);
+
+      const c1=`rat-chart-all-${idx}`;
+      const c2=`rat-chart-30-${idx}`;
+      const last=series[series.length-1];
+      const ratioLast=last.ratio===null?'â€”':last.ratio.toFixed(4);
+      const mediaLast=last.media===null?'â€”':last.media.toFixed(4);
+
+      const card=document.createElement('div');
+      card.className='rat-card';
+      card.innerHTML=`
+        <div class="rat-card-head">
+          <div class="rat-card-name">${sheet.name||('Hoja '+(idx+1))}</div>
+          <div class="rat-card-meta">${series.length} puntos</div>
+        </div>
+        <div class="rat-chart-wrap">
+          <div class="rat-chart-title">HistÃ³rico completo</div>
+          <canvas id="${c1}"></canvas>
+        </div>
+        <div class="rat-chart-wrap">
+          <div class="rat-chart-title">Ãšltimos 30 dÃ­as</div>
+          <canvas id="${c2}"></canvas>
+        </div>
+        <div class="rat-foot">Ãšltimo dato: ${fmtRatioDate(last.d)} | Ratio: ${ratioLast} | Media: ${mediaLast}</div>
+      `;
+      grid.appendChild(card);
+
+      const chAll=buildRatioChart(c1,labelsAll,ratioAll,mediaAll);
+      if(chAll)ratioCharts.push(chAll);
+      const ch30=buildRatioChart(c2,labels30,ratio30,media30);
+      if(ch30)ratioCharts.push(ch30);
+    });
+
+    if(!grid.children.length){
+      grid.innerHTML='<div class="rat-empty">No se encontraron hojas con columnas Fecha + Ratio/Media.</div>';
+    }
+  }catch(e){
+    console.error('ratios load error:',e);
+    grid.innerHTML='<div class="rat-empty">Error cargando Ratios Cedear.</div>';
+  }
+}
+
 setTimeout(loadMarket, 100);
 setTimeout(loadNews,   800);
 setTimeout(loadHist,  1000);
