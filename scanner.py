@@ -124,6 +124,24 @@ def _data912_daily_ohlc(ticker: str) -> Optional[pd.DataFrame]:
     return None
 
 
+def _data912_prices_look_suspicious(ticker: str, df: pd.DataFrame) -> bool:
+    """
+    Heurística simple para evitar series en moneda local cuando buscamos USD.
+    """
+    try:
+        if df is None or df.empty or "close" not in df:
+            return True
+        last = float(df["close"].dropna().iloc[-1])
+        t = (ticker or "").strip().upper()
+        allow_high = {"BKNG", "MELI"}
+        # La gran mayoría de tickers del scanner USA no debería venir > 2000 USD.
+        if last > 2000 and t not in allow_high:
+            return True
+        return False
+    except Exception:
+        return True
+
+
 def _normalize_ohlc(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [c.lower() for c in df.columns]
@@ -133,14 +151,7 @@ def _normalize_ohlc(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def fetch_data_resilient(ticker: str) -> tuple:
-    # Fast-path: evitar Yahoo cuando Data912/FMP ya alcanzan.
-    try:
-        df_d912 = _data912_daily_ohlc(ticker)
-        if df_d912 is not None and len(df_d912) >= 30:
-            df_d = _normalize_ohlc(df_d912)
-            return df_d, df_d.copy()
-    except Exception:
-        pass
+    # Prioridad: FMP/Yahoo (USD USA). Data912 queda como último fallback.
     try:
         df_fmp = _fmp_daily_ohlc(ticker)
         if df_fmp is not None and len(df_fmp) >= 30:
@@ -175,7 +186,10 @@ def fetch_data_resilient(ticker: str) -> tuple:
     if df_d.empty or len(df_d) < 30:
         df_d912 = _data912_daily_ohlc(ticker)
         if df_d912 is not None and len(df_d912) >= 30:
-            df_d = _normalize_ohlc(df_d912)
+            if not _data912_prices_look_suspicious(ticker, df_d912):
+                df_d = _normalize_ohlc(df_d912)
+            else:
+                log.warning(f"{ticker} - Data912 descartado por precio sospechoso (no USD).")
 
     if df_d.empty or len(df_d) < 30:
         return None, None
