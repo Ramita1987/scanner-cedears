@@ -116,6 +116,7 @@ def symbol_candidates(symbol: str) -> list:
 AV_KEY  = os.environ.get("AV_KEY",  "6IFZV2E8RQ6BMJ0L")   # Alpha Vantage
 FMP_KEY = os.environ.get("FMP_KEY", "aiQvIiYs0bc5eOheSFHH2c4kmi4lRVhr")                 # Financial Modeling Prep (free)
 GOOGLE_SHEETS_WEBHOOK_URL = os.environ.get("GOOGLE_SHEETS_WEBHOOK_URL", "").strip()
+RATIOS_SHEETS_WEBHOOK_URL = os.environ.get("RATIOS_SHEETS_WEBHOOK_URL", GOOGLE_SHEETS_WEBHOOK_URL).strip()
 HISTORIAL_SHEETS_WRITEBACK = os.environ.get("HISTORIAL_SHEETS_WRITEBACK", "0").strip().lower() in ("1", "true", "yes", "on")
 
 # ── Cache global ─────────────────────────────────────────────────
@@ -1670,6 +1671,117 @@ def news():
     result = items[:5]
     set_cache("news", result)
     return jsonify(result)
+
+
+def _ratio_pick(row: dict, names: list):
+    for n in names:
+        if n in row and str(row.get(n, "")).strip() != "":
+            return row.get(n)
+    return None
+
+
+def _ratio_parse_date(value):
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    s = s.replace("T", " ").replace("Z", "")
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d",
+        "%d/%m/%Y %H:%M:%S",
+        "%d/%m/%Y %H:%M",
+        "%d/%m/%Y",
+        "%m/%d/%Y %H:%M:%S",
+        "%m/%d/%Y",
+    ):
+        try:
+            return datetime.strptime(s, fmt)
+        except Exception:
+            continue
+    return None
+
+
+def _normalize_ratio_rows(rows: list) -> list:
+    out = []
+    for raw in rows or []:
+        if not isinstance(raw, dict):
+            continue
+        norm = {}
+        for k, v in raw.items():
+            kk = str(k).strip().lower().replace(" ", "_")
+            norm[kk] = v
+        date_val = _ratio_pick(norm, ["fecha", "date", "dia", "día"])
+        ratio_val = _to_float(_ratio_pick(norm, ["ratio", "ratios", "r"]), default=None)
+        media_val = _to_float(_ratio_pick(norm, ["media", "promedio", "mean", "ma"]), default=None)
+        if date_val is None:
+            continue
+        if ratio_val is None and media_val is None:
+            continue
+        out.append({
+            "date": str(date_val).strip(),
+            "ratio": round(ratio_val, 6) if ratio_val is not None else None,
+            "media": round(media_val, 6) if media_val is not None else None,
+        })
+
+    out.sort(
+        key=lambda x: _ratio_parse_date(x.get("date")) or datetime.min
+    )
+    return out
+
+
+def load_ratios_cedear(limit: int = 4000) -> list:
+    cached = get_cache("ratios_cedear", ttl=180)
+    if cached:
+        return cached
+
+    url = (RATIOS_SHEETS_WEBHOOK_URL or "").strip()
+    if not url or "script.google.com/macros/" not in url:
+        return []
+
+    try:
+        sep = "&" if "?" in url else "?"
+        full_url = f"{url}{sep}action=ratios&limit={int(limit)}"
+        r = requests.get(full_url, timeout=25, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code != 200:
+            return []
+        payload = r.json()
+        sheets = []
+        if isinstance(payload, dict):
+            sheets = payload.get("sheets", [])
+        elif isinstance(payload, list):
+            sheets = payload
+        if not isinstance(sheets, list):
+            return []
+
+        out = []
+        for s in sheets:
+            if not isinstance(s, dict):
+                continue
+            name = str(s.get("name", "")).strip() or "Hoja"
+            rows = s.get("rows", []) or s.get("series", [])
+            series = _normalize_ratio_rows(rows)
+            if not series:
+                continue
+            out.append({"name": name, "series": series})
+
+        out.sort(key=lambda x: x.get("name", "").lower())
+        set_cache("ratios_cedear", out)
+        return out
+    except Exception:
+        return []
+
+
+@app.route("/ratios_cedear_data")
+def ratios_cedear_data():
+    sheets = load_ratios_cedear(limit=5000)
+    return jsonify({
+        "ok": bool(sheets),
+        "sheets": sheets,
+        "source": "apps_script",
+    })
 
 
 @app.route("/health_data")
