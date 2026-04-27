@@ -116,6 +116,7 @@ def symbol_candidates(symbol: str) -> list:
 AV_KEY  = os.environ.get("AV_KEY",  "6IFZV2E8RQ6BMJ0L")   # Alpha Vantage
 FMP_KEY = os.environ.get("FMP_KEY", "aiQvIiYs0bc5eOheSFHH2c4kmi4lRVhr")                 # Financial Modeling Prep (free)
 GOOGLE_SHEETS_WEBHOOK_URL = os.environ.get("GOOGLE_SHEETS_WEBHOOK_URL", "").strip()
+HISTORIAL_SHEETS_WRITEBACK = os.environ.get("HISTORIAL_SHEETS_WRITEBACK", "0").strip().lower() in ("1", "true", "yes", "on")
 
 # ── Cache global ─────────────────────────────────────────────────
 _cache = {}
@@ -1079,14 +1080,29 @@ def _cleanup_historial_rows(rows: list) -> list:
         cleaned.append(r)
 
     cleaned.sort(key=_hist_sort_key, reverse=True)
-    return cleaned
+
+    # No repetir múltiples veces la misma señal abierta (ticker+setup): mostrar la más reciente.
+    out = []
+    open_seen = set()
+    for r in cleaned:
+        tk = str(r.get("ticker", "")).strip().upper()
+        st = str(r.get("setup", "")).strip().lower()
+        rs = str(r.get("resultado", "")).strip()
+        if tk and st and not _is_closed_result(rs):
+            k = (tk, st)
+            if k in open_seen:
+                continue
+            open_seen.add(k)
+        out.append(r)
+
+    return out
 
 
 def get_historial():
     rows = _historial_from_sheets(limit=500)
     if rows:
         enriched, updates = _enrich_historial_rows(rows)
-        if updates:
+        if updates and HISTORIAL_SHEETS_WRITEBACK:
             _persist_historial_updates(updates)
         return _cleanup_historial_rows(enriched)
 
