@@ -1715,7 +1715,10 @@ def _normalize_ratio_rows(rows: list) -> list:
             norm[kk] = v
         date_val = _ratio_pick(norm, ["fecha", "date", "dia", "día"])
         ratio_val = _to_float(_ratio_pick(norm, ["ratio", "ratios", "r"]), default=None)
-        media_val = _to_float(_ratio_pick(norm, ["media", "promedio", "mean", "ma"]), default=None)
+        media_val = _to_float(
+            _ratio_pick(norm, ["media", "promedio", "mean", "ma", "ma20", "ma_20", "ema20", "sma20", "mm20"]),
+            default=None,
+        )
         if date_val is None:
             continue
         if ratio_val is None and media_val is None:
@@ -1774,13 +1777,97 @@ def load_ratios_cedear(limit: int = 4000) -> list:
         return []
 
 
+def load_ratios_cedear_debug(limit: int = 4000) -> dict:
+    url = (RATIOS_SHEETS_WEBHOOK_URL or "").strip()
+    out = {
+        "ok": False,
+        "url_set": bool(url),
+        "url_valid": ("script.google.com/macros/" in url) if url else False,
+        "status_code": None,
+        "reason": "",
+        "sheets_count": 0,
+        "points_count": 0,
+    }
+    if url:
+        out["url_preview"] = (url[:90] + "...") if len(url) > 90 else url
+    else:
+        out["url_preview"] = ""
+
+    if not url:
+        out["reason"] = "RATIOS_SHEETS_WEBHOOK_URL vacia"
+        return out
+    if "script.google.com/macros/" not in url:
+        out["reason"] = "URL invalida: debe ser /macros/.../exec"
+        return out
+
+    try:
+        sep = "&" if "?" in url else "?"
+        full_url = f"{url}{sep}action=ratios&limit={int(limit)}"
+        r = requests.get(full_url, timeout=25, headers={"User-Agent": "Mozilla/5.0"})
+        out["status_code"] = r.status_code
+        if r.status_code != 200:
+            out["reason"] = f"Apps Script devolvio HTTP {r.status_code}"
+            return out
+
+        try:
+            payload = r.json()
+        except Exception:
+            body = (r.text or "").strip()
+            out["reason"] = "Respuesta no JSON (revisar permisos/deploy de Apps Script)"
+            out["response_preview"] = (body[:220] + "...") if len(body) > 220 else body
+            return out
+
+        sheets = []
+        if isinstance(payload, dict):
+            sheets = payload.get("sheets", [])
+            if not sheets and payload.get("ok") is False:
+                out["reason"] = str(payload.get("error") or "Apps Script ok=false")
+        elif isinstance(payload, list):
+            sheets = payload
+        if not isinstance(sheets, list):
+            out["reason"] = "Formato invalido: 'sheets' no es lista"
+            return out
+
+        normalized = []
+        for s in sheets:
+            if not isinstance(s, dict):
+                continue
+            name = str(s.get("name", "")).strip() or "Hoja"
+            rows = s.get("rows", []) or s.get("series", [])
+            series = _normalize_ratio_rows(rows)
+            if not series:
+                continue
+            normalized.append({"name": name, "series": series})
+
+        normalized.sort(key=lambda x: x.get("name", "").lower())
+        out["sheets_count"] = len(normalized)
+        out["points_count"] = sum(len(s.get("series", [])) for s in normalized)
+        out["ok"] = bool(normalized)
+        out["sheets"] = normalized
+        if not out["ok"] and not out["reason"]:
+            out["reason"] = "Apps Script respondio, pero sin series utiles"
+        return out
+    except Exception as ex:
+        out["reason"] = f"Error de conexion/parsing: {ex}"
+        return out
+
+
 @app.route("/ratios_cedear_data")
 def ratios_cedear_data():
-    sheets = load_ratios_cedear(limit=5000)
+    dbg = load_ratios_cedear_debug(limit=5000)
     return jsonify({
-        "ok": bool(sheets),
-        "sheets": sheets,
+        "ok": bool(dbg.get("ok")),
+        "sheets": dbg.get("sheets", []),
         "source": "apps_script",
+        "debug": {
+            "url_set": dbg.get("url_set"),
+            "url_valid": dbg.get("url_valid"),
+            "url_preview": dbg.get("url_preview", ""),
+            "status_code": dbg.get("status_code"),
+            "reason": dbg.get("reason", ""),
+            "sheets_count": dbg.get("sheets_count", 0),
+            "points_count": dbg.get("points_count", 0),
+        },
     })
 
 
