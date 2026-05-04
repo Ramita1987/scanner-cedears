@@ -117,6 +117,8 @@ AV_KEY  = os.environ.get("AV_KEY",  "6IFZV2E8RQ6BMJ0L")   # Alpha Vantage
 FMP_KEY = os.environ.get("FMP_KEY", "aiQvIiYs0bc5eOheSFHH2c4kmi4lRVhr")                 # Financial Modeling Prep (free)
 GOOGLE_SHEETS_WEBHOOK_URL = os.environ.get("GOOGLE_SHEETS_WEBHOOK_URL", "").strip()
 RATIOS_SHEETS_WEBHOOK_URL = os.environ.get("RATIOS_SHEETS_WEBHOOK_URL", GOOGLE_SHEETS_WEBHOOK_URL).strip()
+RATIOS_FETCH_LIMIT = int(os.environ.get("RATIOS_FETCH_LIMIT", "1500") or 1500)
+RATIOS_FETCH_TIMEOUT = int(os.environ.get("RATIOS_FETCH_TIMEOUT", "70") or 70)
 HISTORIAL_SHEETS_WRITEBACK = os.environ.get("HISTORIAL_SHEETS_WRITEBACK", "0").strip().lower() in ("1", "true", "yes", "on")
 
 # ── Cache global ─────────────────────────────────────────────────
@@ -1779,6 +1781,8 @@ def load_ratios_cedear(limit: int = 4000) -> list:
 
 def load_ratios_cedear_debug(limit: int = 4000) -> dict:
     url = (RATIOS_SHEETS_WEBHOOK_URL or "").strip()
+    safe_limit = max(100, min(int(limit or RATIOS_FETCH_LIMIT), 5000))
+    safe_timeout = max(20, min(int(RATIOS_FETCH_TIMEOUT), 120))
     out = {
         "ok": False,
         "url_set": bool(url),
@@ -1787,6 +1791,8 @@ def load_ratios_cedear_debug(limit: int = 4000) -> dict:
         "reason": "",
         "sheets_count": 0,
         "points_count": 0,
+        "request_limit": safe_limit,
+        "request_timeout": safe_timeout,
     }
     if url:
         out["url_preview"] = (url[:90] + "...") if len(url) > 90 else url
@@ -1802,8 +1808,19 @@ def load_ratios_cedear_debug(limit: int = 4000) -> dict:
 
     try:
         sep = "&" if "?" in url else "?"
-        full_url = f"{url}{sep}action=ratios&limit={int(limit)}"
-        r = requests.get(full_url, timeout=25, headers={"User-Agent": "Mozilla/5.0"})
+        full_url = f"{url}{sep}action=ratios&limit={safe_limit}"
+        r = None
+        last_err = None
+        for _ in range(2):
+            try:
+                r = requests.get(full_url, timeout=safe_timeout, headers={"User-Agent": "Mozilla/5.0"})
+                break
+            except Exception as ex:
+                last_err = ex
+                r = None
+        if r is None:
+            out["reason"] = f"Error de conexion/parsing: {last_err}"
+            return out
         out["status_code"] = r.status_code
         if r.status_code != 200:
             out["reason"] = f"Apps Script devolvio HTTP {r.status_code}"
@@ -1854,7 +1871,7 @@ def load_ratios_cedear_debug(limit: int = 4000) -> dict:
 
 @app.route("/ratios_cedear_data")
 def ratios_cedear_data():
-    dbg = load_ratios_cedear_debug(limit=5000)
+    dbg = load_ratios_cedear_debug(limit=RATIOS_FETCH_LIMIT)
     return jsonify({
         "ok": bool(dbg.get("ok")),
         "sheets": dbg.get("sheets", []),
