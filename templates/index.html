@@ -1181,7 +1181,9 @@ async function loadRatiosCedear(force=false){
     const payload=await res.json();
     const sheets=Array.isArray(payload.sheets)?payload.sheets:[];
     if(!sheets.length){
-      grid.innerHTML='<div class="rat-empty">No hay datos de ratios disponibles en este momento.</div>';
+      const dbg=payload.debug||{};
+      const reason=dbg.reason?`<br><small style="color:var(--text3)">${dbg.reason}</small>`:'';
+      grid.innerHTML=`<div class="rat-empty">No hay datos de ratios disponibles en este momento.${reason}</div>`;
       return;
     }
 
