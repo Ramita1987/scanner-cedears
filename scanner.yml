@@ -1,0 +1,80 @@
+name: Scanner CEDEARs Automatico
+
+on:
+  schedule:
+    # Horarios fijos (UTC), evitando minutos pico de GitHub Actions
+    # para reducir retrasos de ejecucion.
+    # PRE-MARKET: 10:20 ARG = 13:20 UTC
+    - cron: "20 13 * * 1-5"
+    # APERTURA: 10:55 ARG = 13:55 UTC
+    - cron: "55 13 * * 1-5"
+    # CIERRE: 16:50 ARG = 19:50 UTC
+    - cron: "50 19 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      session:
+        description: "Sesion del scanner"
+        required: true
+        default: "MANUAL"
+        type: choice
+        options:
+          - MANUAL
+          - PRE-MARKET
+          - APERTURA
+          - CIERRE
+
+jobs:
+  run-scanner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout codigo
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependencias
+        run: pip install yfinance pandas numpy requests openpyxl
+
+      - name: Debug horario
+        run: |
+          echo "UTC now: $(date -u '+%Y-%m-%d %H:%M:%S')"
+          TZ=America/Argentina/Buenos_Aires date '+ARG now: %Y-%m-%d %H:%M:%S'
+          echo "Evento: ${{ github.event_name }}"
+          echo "Cron recibido: '${{ github.event.schedule }}'"
+
+      - name: Determinar sesion
+        id: session
+        run: |
+          INPUT="${{ github.event.inputs.session }}"
+          EVENT_NAME="${{ github.event_name }}"
+          CRON_EXPR="${{ github.event.schedule }}"
+
+          if [ -n "$INPUT" ]; then
+            echo "name=$INPUT" >> $GITHUB_OUTPUT
+          elif [ "$EVENT_NAME" = "schedule" ]; then
+            if [ "$CRON_EXPR" = "20 13 * * 1-5" ]; then
+              echo "name=PRE-MARKET" >> $GITHUB_OUTPUT
+            elif [ "$CRON_EXPR" = "55 13 * * 1-5" ]; then
+              echo "name=APERTURA" >> $GITHUB_OUTPUT
+            elif [ "$CRON_EXPR" = "50 19 * * 1-5" ]; then
+              echo "name=CIERRE" >> $GITHUB_OUTPUT
+            else
+              echo "name=MANUAL" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "name=MANUAL" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Correr scanner
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GOOGLE_SHEETS_WEBHOOK_URL: ${{ secrets.GOOGLE_SHEETS_WEBHOOK_URL }}
+          FMP_KEY: ${{ secrets.FMP_KEY }}
+          SESSION_NAME: ${{ steps.session.outputs.name }}
+        run: python run_scanner_ci.py
