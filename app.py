@@ -97,13 +97,13 @@ SYMBOL_ALIASES = {
 }
 
 
-def symbol_candidates(symbol: str) -> list:
+def symbol_candidates(symbol: str, include_ba: bool = True) -> list:
     s = (symbol or "").strip().upper()
     if not s:
         return []
     out = [s]
     out.extend(SYMBOL_ALIASES.get(s, []))
-    if "." not in s and "-" not in s and len(s) <= 5:
+    if include_ba and "." not in s and "-" not in s and len(s) <= 5:
         out.append(f"{s}.BA")
     uniq = []
     for x in out:
@@ -211,19 +211,24 @@ def data912_quote_map(symbols: list) -> dict:
     return out
 
 
-def data912_daily(symbol: str, timeseries: int = 130) -> list:
-    """Histórico diario Data912 (cedears -> stocks)."""
-    key = f"d912d_{symbol}_{timeseries}"
+def data912_daily(symbol: str, timeseries: int = 130, include_cedears: bool = True) -> list:
+    """Histórico diario Data912, priorizando mercado original (stocks USA)."""
+    key = f"d912d_{symbol}_{timeseries}_{1 if include_cedears else 0}"
     cached = get_cache(key, ttl=3600)
     if cached:
         return cached
     sym = (symbol or "").strip().upper()
     if not sym:
         return []
-    for cand in symbol_candidates(sym):
-        for endpoint in (f"cedears/{cand}", f"stocks/{cand}"):
+    candidates = symbol_candidates(sym, include_ba=include_cedears)
+    endpoint_bases = ["stocks"]
+    if include_cedears:
+        endpoint_bases.append("cedears")
+
+    for cand in candidates:
+        for endpoint_base in endpoint_bases:
             try:
-                url = f"https://data912.com/historical/{endpoint}"
+                url = f"https://data912.com/historical/{endpoint_base}/{cand}"
                 r = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
                 if r.status_code != 200:
                     continue
@@ -580,15 +585,16 @@ def stooq_daily(symbol: str, timeseries: int = 130) -> list:
     return []
 
 
-def fmp_daily(symbol: str, timeseries: int = 130) -> list:
+def fmp_daily(symbol: str, timeseries: int = 130, include_cedears: bool = True, include_ba: bool = True) -> list:
     """Histórico diario FMP con fallback a Alpha Vantage."""
-    cached = get_cache(f"fmpd_{symbol}", ttl=3600)
+    cache_key = f"fmpd_{symbol}_{1 if include_cedears else 0}_{1 if include_ba else 0}"
+    cached = get_cache(cache_key, ttl=3600)
     if cached:
         return cached
-    d912_hist = data912_daily(symbol, timeseries=timeseries)
+    d912_hist = data912_daily(symbol, timeseries=timeseries, include_cedears=include_cedears)
     if len(d912_hist) >= 5:
         return d912_hist
-    for cand in symbol_candidates(symbol):
+    for cand in symbol_candidates(symbol, include_ba=include_ba):
         try:
             enc = quote(cand, safe="")
             url = (
@@ -612,7 +618,7 @@ def fmp_daily(symbol: str, timeseries: int = 130) -> list:
                 if date and close is not None:
                     hist.append({"date": date, "close": round(close, 2)})
             if len(hist) >= 5:
-                return set_cache(f"fmpd_{symbol}", hist[-timeseries:])
+                return set_cache(cache_key, hist[-timeseries:])
         except Exception:
             continue
 
@@ -620,12 +626,12 @@ def fmp_daily(symbol: str, timeseries: int = 130) -> list:
     if len(stq_hist) >= 5:
         return stq_hist
 
-    for cand in symbol_candidates(symbol):
+    for cand in symbol_candidates(symbol, include_ba=include_ba):
         av_hist = av_daily(cand)
         if len(av_hist) >= 5:
             return av_hist
 
-    for cand in symbol_candidates(symbol):
+    for cand in symbol_candidates(symbol, include_ba=include_ba):
         yf_hist = yf_daily(cand, timeseries=timeseries)
         if len(yf_hist) >= 5:
             return yf_hist
@@ -653,7 +659,12 @@ def sector_daily_resilient(symbol: str, timeseries: int = 130) -> tuple:
         candidates.append(sec_proxy)
 
     for cand in candidates:
-        hist = fmp_daily(cand, timeseries=timeseries)
+        hist = fmp_daily(
+            cand,
+            timeseries=timeseries,
+            include_cedears=False,
+            include_ba=False,
+        )
         if len(hist) >= 5:
             return hist, cand, cand != sym
     return [], "", False
